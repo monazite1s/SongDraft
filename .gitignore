@@ -1,0 +1,22 @@
+# OS and editor files
+.DS_Store
+
+# v0 visual reference: never part of the SongDraft repository
+inspire2-demo/
+
+# Dependencies and build output
+node_modules/
+.next/
+out/
+
+# Local credentials and environment overrides
+.env*
+!.env.example
+
+# Tests and local runtime artifacts
+coverage/
+playwright-report/
+test-results/
+storage-local/
+*.log
+*.tsbuildinfo

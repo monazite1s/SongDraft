@@ -6,10 +6,10 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 
 import { getDatabase } from "@/infrastructure/db/client";
-import { comments, demoAssets, demoVersions, projects, shareLinks } from "@/infrastructure/db/schema";
+import { comments, demoAssets, demoVersions, profiles, projects, shareAccessGrants, shareLinks } from "@/infrastructure/db/schema";
 import type { AuthUser } from "@/modules/auth/types";
 import { getMockVersion } from "@/modules/generation/generation-service";
 import { getProjectRepository } from "@/modules/projects/project-repository";
@@ -19,21 +19,28 @@ import { DomainError } from "@/shared/errors/domain-error";
 export interface PublicComment { id: string; author: string; content: string; atMs: number | null; createdAt: string; }
 export interface PublicShare { title: string; description: string | null; lyrics: string | null; artist: ArtistProfile | null; author: string; versionId: string; versionNo: number; demoTitle: string; hasAudio: boolean; audioUrl: string | null; executionKind: "real_local" | "real_external" | "simulated"; allowComments: boolean; comments: PublicComment[]; }
 export interface OwnerShareView { id: string; versionId: string; allowComments: boolean; expiresAt: string | null; revokedAt: string | null; createdAt: string; }
-export interface OwnerCommentView extends PublicComment { versionId: string; shareId: string; read: boolean; }
+export interface OwnerCommentView extends PublicComment { versionId: string; shareId: string | null; read: boolean; }
+export interface AccessGrantView { id: string; accessorId: string; accessorDisplayName: string; accessorEmail: string; firstAccessedAt: string | null; lastAccessedAt: string | null; revokedAt: string | null; }
 interface StoredShare { id: string; token: string; projectId: string; versionId: string; ownerId: string; allowComments: boolean; expiresAt: string | null; revokedAt: string | null; public: PublicShare; }
+interface StoredGrant { id: string; shareId: string; projectId: string; accessorUserId: string; accessorDisplayName: string; accessorEmail: string; grantedBy: string; firstAccessedAt: string | null; lastAccessedAt: string | null; revokedAt: string | null; }
 const songDraftShareStore = globalThis as typeof globalThis & {
   __songDraftShares?: Map<string, StoredShare>;
   __songDraftReadComments?: Set<string>;
   __songDraftDeletedComments?: Set<string>;
+  __songDraftShareGrants?: Map<string, StoredGrant>;
 };
 const mockShares = songDraftShareStore.__songDraftShares ??= new Map<string, StoredShare>();
 const mockReadComments = songDraftShareStore.__songDraftReadComments ??= new Set<string>();
 const mockDeletedComments = songDraftShareStore.__songDraftDeletedComments ??= new Set<string>();
+const mockGrants = songDraftShareStore.__songDraftShareGrants ??= new Map<string, StoredGrant>();
 
 function tokenHash(token: string) { return createHash("sha256").update(token).digest("hex"); }
 function freshToken() { return randomBytes(24).toString("base64url"); }
 function assertActive(share: Pick<StoredShare, "revokedAt" | "expiresAt">) {
   if (share.revokedAt || (share.expiresAt && new Date(share.expiresAt).getTime() <= Date.now())) throw new DomainError("NOT_FOUND", 404, "分享链接不存在、已过期或已撤回");
+}
+function requireLogin(user: AuthUser | null): asserts user is AuthUser {
+  if (!user) throw new DomainError("UNAUTHENTICATED", 401, "需要登录后查看分享");
 }
 
 export class ShareService {
@@ -59,15 +66,68 @@ export class ShareService {
     return { id: share.id, token, expiresAt: share.expiresAt?.toISOString() ?? null, allowComments };
   }
 
-  /** 公开访问：校验 Token 有效后返回可播放 Demo 与评论（无管理操作）。 */
-  async getPublic(token: string): Promise<PublicShare> {
-    if (!process.env.DATABASE_URL) { const share = mockShares.get(token); if (!share) throw new DomainError("NOT_FOUND", 404, "分享链接不存在"); assertActive(share); return { ...share.public, comments: share.public.comments.filter((comment) => !mockDeletedComments.has(comment.id)) }; }
+  /** 公开访问：校验 Token + 登录 + 白名单授权后返回可播放 Demo 与评论。 */
+  async getPublic(token: string, user: AuthUser | null): Promise<PublicShare> {
+    requireLogin(user);
+    if (!process.env.DATABASE_URL) {
+      const share = mockShares.get(token);
+      if (!share) throw new DomainError("NOT_FOUND", 404, "分享链接不存在");
+      assertActive(share);
+      await this.authorizeMockAccess(share, user);
+      return { ...share.public, comments: share.public.comments.filter((comment) => !mockDeletedComments.has(comment.id)) };
+    }
     const db = getDatabase();
-    const [share] = await db.select({ id: shareLinks.id, projectId: shareLinks.projectId, versionId: shareLinks.versionId, allowComments: shareLinks.allowComments, expiresAt: shareLinks.expiresAt, revokedAt: shareLinks.revokedAt, title: projects.title, description: projects.description, lyrics: projects.currentLyrics, artist: projects.artistSnapshot, versionNo: demoVersions.versionNo }).from(shareLinks).innerJoin(projects, eq(projects.id, shareLinks.projectId)).innerJoin(demoVersions, eq(demoVersions.id, shareLinks.versionId)).where(eq(shareLinks.tokenHash, tokenHash(token))).limit(1);
+    const [share] = await db.select({ id: shareLinks.id, projectId: shareLinks.projectId, ownerId: projects.ownerId, versionId: shareLinks.versionId, allowComments: shareLinks.allowComments, expiresAt: shareLinks.expiresAt, revokedAt: shareLinks.revokedAt, title: projects.title, description: projects.description, lyrics: projects.currentLyrics, artist: projects.artistSnapshot, versionNo: demoVersions.versionNo }).from(shareLinks).innerJoin(projects, eq(projects.id, shareLinks.projectId)).innerJoin(demoVersions, eq(demoVersions.id, shareLinks.versionId)).where(eq(shareLinks.tokenHash, tokenHash(token))).limit(1);
     if (!share) throw new DomainError("NOT_FOUND", 404, "分享链接不存在"); assertActive({ expiresAt: share.expiresAt?.toISOString() ?? null, revokedAt: share.revokedAt?.toISOString() ?? null });
+    await this.ensureDbGrant(share.id, share.projectId, share.ownerId, user);
     const [asset] = await db.select({ metadata: demoAssets.metadata, executionKind: demoAssets.executionKind }).from(demoAssets).where(eq(demoAssets.versionId, share.versionId)).limit(1);
     const rows = await db.select({ id: comments.id, guestName: comments.guestName, content: comments.content, atMs: comments.atMs, createdAt: comments.createdAt }).from(comments).where(and(eq(comments.shareId, share.id), isNull(comments.deletedAt)));
     return { title: share.title, description: share.description, lyrics: share.lyrics, artist: share.artist as unknown as ArtistProfile | null, author: "SongDraft 创作者", versionId: share.versionId, versionNo: share.versionNo, demoTitle: String(asset?.metadata.title || `${share.title} Demo`), hasAudio: Boolean(asset?.metadata.hasAudio), audioUrl: typeof asset?.metadata.audioUrl === "string" ? asset.metadata.audioUrl : null, executionKind: asset?.executionKind || "simulated", allowComments: share.allowComments, comments: rows.map((row) => ({ id: row.id, author: row.guestName || "SongDraft 用户", content: row.content, atMs: row.atMs, createdAt: row.createdAt.toISOString() })) };
+  }
+
+  /**
+   * Mock 白名单授权：owner 直接放行；已登录访问者首次有效访问建立授权，
+   * 已有未撤销授权则刷新 lastAccessedAt，无授权（含已撤销）则 403（不泄露标题/封面）。
+   */
+  private async authorizeMockAccess(share: StoredShare, user: AuthUser) {
+    if (share.ownerId === user.id) return;
+    const grants = [...mockGrants.values()].filter((g) => g.shareId === share.id && g.accessorUserId === user.id);
+    const active = grants.find((g) => !g.revokedAt);
+    if (active) { active.lastAccessedAt = new Date().toISOString(); return; }
+    // 该访问者此前从未建立过授权 → 首次有效访问自动授权；若仅有已撤销记录 → 403。
+    if (grants.length > 0) throw new DomainError("FORBIDDEN", 403, "无访问权限");
+    const now = new Date().toISOString();
+    const grant: StoredGrant = { id: crypto.randomUUID(), shareId: share.id, projectId: share.projectId, accessorUserId: user.id, accessorDisplayName: user.displayName, accessorEmail: user.email, grantedBy: share.ownerId, firstAccessedAt: now, lastAccessedAt: now, revokedAt: null };
+    mockGrants.set(grant.id, grant);
+  }
+
+  /**
+   * Drizzle 白名单授权：owner 放行；其余访问者——存在未撤销 grant 则刷新 lastAccessedAt，
+   * 从无授权记录则首次有效访问自动授权，仅有已撤销记录则 403。
+   */
+  private async ensureDbGrant(shareId: string, projectId: string, ownerId: string, user: AuthUser) {
+    if (ownerId === user.id) return;
+    const db = getDatabase();
+    const now = new Date();
+    const rows = await db.select({ id: shareAccessGrants.id, revokedAt: shareAccessGrants.revokedAt }).from(shareAccessGrants).where(and(eq(shareAccessGrants.shareId, shareId), eq(shareAccessGrants.accessorUserId, user.id)));
+    const active = rows.find((r) => !r.revokedAt);
+    if (active) { await db.update(shareAccessGrants).set({ lastAccessedAt: now }).where(eq(shareAccessGrants.id, active.id)); return; }
+    if (rows.length > 0) throw new DomainError("FORBIDDEN", 403, "无访问权限");
+    try { await db.insert(shareAccessGrants).values({ shareId, projectId, accessorUserId: user.id, grantedBy: ownerId, firstAccessedAt: now, lastAccessedAt: now }); }
+    catch { /* partial unique 冲突（并发首次访问）→ 视为已授权 */ }
+  }
+
+  /** 校验访问者持有未撤销授权或是 owner；否则 403。供 comment 等操作复用。 */
+  private async assertMockGrant(share: StoredShare, user: AuthUser) {
+    if (share.ownerId === user.id) return;
+    const has = [...mockGrants.values()].some((g) => g.shareId === share.id && g.accessorUserId === user.id && !g.revokedAt);
+    if (!has) throw new DomainError("FORBIDDEN", 403, "无访问权限");
+  }
+  private async assertDbGrant(shareId: string, ownerId: string, user: AuthUser) {
+    if (ownerId === user.id) return;
+    const db = getDatabase();
+    const [grant] = await db.select({ id: shareAccessGrants.id }).from(shareAccessGrants).where(and(eq(shareAccessGrants.shareId, shareId), eq(shareAccessGrants.accessorUserId, user.id), isNull(shareAccessGrants.revokedAt))).limit(1);
+    if (!grant) throw new DomainError("FORBIDDEN", 403, "无访问权限");
   }
 
   async list(owner: AuthUser, projectId: string): Promise<OwnerShareView[]> {
@@ -112,11 +172,56 @@ export class ShareService {
     const atMs = input.atMs ?? null;
     if (atMs !== null && (!Number.isInteger(atMs) || atMs < 0)) throw new DomainError("VALIDATION_FAILED", 422, "时间点无效");
     if (!user && (!input.guestName?.trim() || input.guestName.trim().length > 40)) throw new DomainError("VALIDATION_FAILED", 422, "访客昵称需为 1–40 字");
-    if (!process.env.DATABASE_URL) { const share = mockShares.get(token); if (!share) throw new DomainError("NOT_FOUND", 404, "分享链接不存在"); assertActive(share); if (!share.allowComments) throw new DomainError("FORBIDDEN", 403, "该分享未开放评论"); const comment: PublicComment = { id: crypto.randomUUID(), author: user?.displayName || input.guestName!.trim(), content, atMs, createdAt: new Date().toISOString() }; share.public.comments.push(comment); return comment; }
+    if (!process.env.DATABASE_URL) {
+      const share = mockShares.get(token);
+      if (!share) throw new DomainError("NOT_FOUND", 404, "分享链接不存在");
+      assertActive(share);
+      if (!share.allowComments) throw new DomainError("FORBIDDEN", 403, "该分享未开放评论");
+      if (user) await this.assertMockGrant(share, user);
+      const comment: PublicComment = { id: crypto.randomUUID(), author: user?.displayName || input.guestName!.trim(), content, atMs, createdAt: new Date().toISOString() };
+      share.public.comments.push(comment); return comment;
+    }
     const db = getDatabase();
-    const [share] = await db.select({ id: shareLinks.id, projectId: shareLinks.projectId, versionId: shareLinks.versionId, allowComments: shareLinks.allowComments, expiresAt: shareLinks.expiresAt, revokedAt: shareLinks.revokedAt }).from(shareLinks).where(eq(shareLinks.tokenHash, tokenHash(token))).limit(1);
+    const [share] = await db.select({ id: shareLinks.id, projectId: shareLinks.projectId, ownerId: projects.ownerId, versionId: shareLinks.versionId, allowComments: shareLinks.allowComments, expiresAt: shareLinks.expiresAt, revokedAt: shareLinks.revokedAt }).from(shareLinks).innerJoin(projects, eq(projects.id, shareLinks.projectId)).where(eq(shareLinks.tokenHash, tokenHash(token))).limit(1);
     if (!share) throw new DomainError("NOT_FOUND", 404, "分享链接不存在"); assertActive({ expiresAt: share.expiresAt?.toISOString() ?? null, revokedAt: share.revokedAt?.toISOString() ?? null }); if (!share.allowComments) throw new DomainError("FORBIDDEN", 403, "该分享未开放评论");
+    if (user) await this.assertDbGrant(share.id, share.ownerId, user);
     const [comment] = await db.insert(comments).values({ projectId: share.projectId, versionId: share.versionId, shareId: share.id, authorUserId: user?.id ?? null, guestName: user ? null : input.guestName!.trim(), content, atMs }).returning();
     if (!comment) throw new Error("Comment creation failed"); return { id: comment.id, author: user?.displayName || input.guestName!.trim(), content: comment.content, atMs: comment.atMs, createdAt: comment.createdAt.toISOString() };
+  }
+
+  /** Owner 列出某分享的访问授权（含已撤销，便于审计）。 */
+  async listGrants(owner: AuthUser, shareId: string): Promise<AccessGrantView[]> {
+    if (!process.env.DATABASE_URL) {
+      const share = [...mockShares.values()].find((item) => item.id === shareId && item.ownerId === owner.id);
+      if (!share) throw new DomainError("NOT_FOUND", 404, "分享链接不存在");
+      return [...mockGrants.values()].filter((g) => g.shareId === shareId)
+        .map((g) => ({ id: g.id, accessorId: g.accessorUserId, accessorDisplayName: g.accessorDisplayName, accessorEmail: g.accessorEmail, firstAccessedAt: g.firstAccessedAt, lastAccessedAt: g.lastAccessedAt, revokedAt: g.revokedAt }))
+        .sort((a, b) => (b.firstAccessedAt ?? "").localeCompare(a.firstAccessedAt ?? ""));
+    }
+    const db = getDatabase();
+    const [share] = await db.select({ id: shareLinks.id }).from(shareLinks).innerJoin(projects, eq(projects.id, shareLinks.projectId)).where(and(eq(shareLinks.id, shareId), eq(projects.ownerId, owner.id))).limit(1);
+    if (!share) throw new DomainError("NOT_FOUND", 404, "分享链接不存在");
+    const rows = await db.select({ id: shareAccessGrants.id, accessorId: shareAccessGrants.accessorUserId, accessorDisplayName: profiles.displayName, accessorEmail: profiles.email, firstAccessedAt: shareAccessGrants.firstAccessedAt, lastAccessedAt: shareAccessGrants.lastAccessedAt, revokedAt: shareAccessGrants.revokedAt }).from(shareAccessGrants).innerJoin(profiles, eq(profiles.id, shareAccessGrants.accessorUserId)).where(eq(shareAccessGrants.shareId, shareId)).orderBy(desc(shareAccessGrants.firstAccessedAt));
+    return rows.map((row) => ({ id: row.id, accessorId: row.accessorId, accessorDisplayName: row.accessorDisplayName, accessorEmail: row.accessorEmail, firstAccessedAt: row.firstAccessedAt?.toISOString() ?? null, lastAccessedAt: row.lastAccessedAt?.toISOString() ?? null, revokedAt: row.revokedAt?.toISOString() ?? null }));
+  }
+
+  /** Owner 撤销某访问者的授权，撤销后该访问者再访问将被拒绝（403）。 */
+  async revokeGrant(owner: AuthUser, shareId: string, grantId: string) {
+    if (!process.env.DATABASE_URL) {
+      const share = [...mockShares.values()].find((item) => item.id === shareId && item.ownerId === owner.id);
+      if (!share) throw new DomainError("NOT_FOUND", 404, "分享链接不存在");
+      const grant = mockGrants.get(grantId);
+      if (!grant || grant.shareId !== shareId) throw new DomainError("NOT_FOUND", 404, "授权记录不存在");
+      grant.revokedAt = new Date().toISOString();
+      return { id: grantId, revokedAt: grant.revokedAt };
+    }
+    const db = getDatabase();
+    const [share] = await db.select({ id: shareLinks.id }).from(shareLinks).innerJoin(projects, eq(projects.id, shareLinks.projectId)).where(and(eq(shareLinks.id, shareId), eq(projects.ownerId, owner.id))).limit(1);
+    if (!share) throw new DomainError("NOT_FOUND", 404, "分享链接不存在");
+    const [grant] = await db.select({ id: shareAccessGrants.id }).from(shareAccessGrants).where(and(eq(shareAccessGrants.id, grantId), eq(shareAccessGrants.shareId, shareId))).limit(1);
+    if (!grant) throw new DomainError("NOT_FOUND", 404, "授权记录不存在");
+    const revokedAt = new Date();
+    await db.update(shareAccessGrants).set({ revokedAt }).where(eq(shareAccessGrants.id, grantId));
+    return { id: grantId, revokedAt: revokedAt.toISOString() };
   }
 }

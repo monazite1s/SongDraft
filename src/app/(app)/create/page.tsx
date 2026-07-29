@@ -1,6 +1,6 @@
-/** 制作台入口：新建空工作台（docs/development-state.md UI 基线）。 */
-import { SongDraftWorkspace } from '@/components/inspire/workspace'
+/** 制作台入口（docs/SPEC.md §2 触点 A）。 */
+import { CreateProjectPage } from "@/components/inspire/create-page-client";
 
 export default function CreatePage() {
-  return <SongDraftWorkspace />
+  return <CreateProjectPage />;
 }

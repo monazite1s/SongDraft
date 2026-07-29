@@ -301,6 +301,7 @@ function CandidateCard({
   selected,
   onToggleSelected,
   onSetMain,
+  onOpenDetail,
 }: {
   c: DemoCandidate
   isMain: boolean
@@ -308,6 +309,7 @@ function CandidateCard({
   selected: boolean
   onToggleSelected: () => void
   onSetMain: () => void
+  onOpenDetail: () => void
 }) {
   const provider = PROVIDERS.find((p) => p.id === c.providerId)!
   const output = OUTPUT_TYPES.find((o) => o.id === c.outputType)!
@@ -338,9 +340,14 @@ function CandidateCard({
               >
                 {selected && <Check className="size-3" />}
               </button>
-              <h4 className="truncate text-sm font-medium text-foreground">
+              <button
+                type="button"
+                onClick={onOpenDetail}
+                title="查看详情"
+                className="truncate text-left text-sm font-medium text-foreground transition-colors hover:text-brand"
+              >
                 {c.title}
-              </h4>
+              </button>
             </div>
             {isMain && (
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-brand-muted px-1.5 py-0.5 text-[11px] font-medium text-brand">
@@ -391,6 +398,13 @@ function CandidateCard({
         >
           <Crown className="size-3.5" />
           {isMain ? '当前主版本' : '设为主版本'}
+        </button>
+        <button
+          onClick={onOpenDetail}
+          className="flex items-center justify-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+        >
+          <Layers className="size-3.5" />
+          详情
         </button>
         <button className="flex items-center justify-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted">
           <RefreshCw className="size-3.5" />
@@ -467,6 +481,7 @@ function ResultsSection({
   savedCandidateIds,
   mainId,
   onSetMain,
+  onOpenDetail,
   onSaveVersion,
 }: {
   busy: Busy
@@ -475,6 +490,7 @@ function ResultsSection({
   savedCandidateIds: string[]
   mainId: string
   onSetMain: (id: string) => void
+  onOpenDetail: (id: string) => void
   onSaveVersion: (candidateIds: string[]) => void
 }) {
   const [collapsed, setCollapsed] = useState(false)
@@ -556,6 +572,7 @@ function ResultsSection({
                 selected={selectedIds.includes(c.id)}
                 onToggleSelected={() => toggleSelected(c.id)}
                 onSetMain={() => onSetMain(c.id)}
+                onOpenDetail={() => onOpenDetail(c.id)}
               />
             ))}
           </div>
@@ -611,6 +628,7 @@ export function BriefPanel({
   savedCandidateIds,
   mainId,
   onSetMain,
+  onOpenDetail,
   onSaveVersion,
 }: {
   phase: Phase
@@ -627,6 +645,7 @@ export function BriefPanel({
   savedCandidateIds: string[]
   mainId: string
   onSetMain: (id: string) => void
+  onOpenDetail: (id: string) => void
   onSaveVersion: (candidateIds: string[]) => void
 }) {
   const [briefCollapsed, setBriefCollapsed] = useState(false)
@@ -701,6 +720,7 @@ export function BriefPanel({
           savedCandidateIds={savedCandidateIds}
           mainId={mainId}
           onSetMain={onSetMain}
+          onOpenDetail={onOpenDetail}
           onSaveVersion={onSaveVersion}
         />
       )}

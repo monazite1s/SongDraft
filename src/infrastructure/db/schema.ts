@@ -299,7 +299,7 @@ export const comments = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
     versionId: uuid("version_id").notNull().references(() => demoVersions.id, { onDelete: "cascade" }),
-    shareId: uuid("share_id").notNull().references(() => shareLinks.id, { onDelete: "cascade" }),
+    shareId: uuid("share_id").references(() => shareLinks.id, { onDelete: "cascade" }),
     authorUserId: uuid("author_user_id").references(() => profiles.id, { onDelete: "set null" }),
     guestName: text("guest_name"),
     content: text("content").notNull(),
@@ -309,4 +309,28 @@ export const comments = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("comments_version_created_idx").on(table.versionId, table.createdAt)],
+);
+
+/**
+ * 分享访问授权（docs/SPEC.md §7 分享权限白名单）。
+ * 首次有效访问时为已登录访问者建立授权记录；撤销后 revoked_at 非空。
+ * partial unique 保证同一 share + accessor 仅有一条未撤销记录，防重复授权。
+ */
+export const shareAccessGrants = pgTable(
+  "share_access_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    shareId: uuid("share_id").notNull().references(() => shareLinks.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    accessorUserId: uuid("accessor_user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+    grantedBy: uuid("granted_by").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+    firstAccessedAt: timestamp("first_accessed_at", { withTimezone: true }),
+    lastAccessedAt: timestamp("last_accessed_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("share_grants_share_accessor_idx").on(table.shareId, table.accessorUserId).where(sql`${table.revokedAt} IS NULL`),
+    index("share_grants_accessor_project_idx").on(table.accessorUserId, table.projectId),
+  ],
 );

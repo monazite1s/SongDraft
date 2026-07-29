@@ -35,9 +35,25 @@ export interface DemoVersionView {
   hasAudio: boolean;
   audioUrl?: string | null;
   restoredFromVersionId?: string | null;
+  /** 父版本 id（版本树父子关系）；null 表示根节点。 */
+  parentId?: string | null;
 }
 
 /** 将候选保存为正式版本的结果。 */
 export interface SaveCandidatesResult {
   saved: DemoVersionView[];
+}
+
+/** 最近歌曲（侧栏「最近歌曲」数据源）：取每个最近项目的代表版本（主版本/最新版本）。 */
+export interface RecentSongItem {
+  /** 版本 id（歌曲代表版本）。 */
+  versionId: string;
+  /** 所属项目 id（点击进入 /create/[projectId]）。 */
+  projectId: string;
+  /** 版本标题（歌曲名）。 */
+  title: string;
+  /** 所属项目名（小字展示）。 */
+  projectName: string;
+  /** 版本更新时间（用于排序与展示）。 */
+  updatedAt: string;
 }

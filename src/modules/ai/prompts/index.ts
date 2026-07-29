@@ -6,18 +6,26 @@ export { CONVERSATION_SYSTEM_PROMPT } from "./conversation.system";
 export { LYRICS_SYSTEM_PROMPT } from "./lyrics.system";
 export { MUSIC_SYSTEM_PROMPT } from "./music.system";
 export { BRIEF_SYSTEM_PROMPT } from "./brief.system";
+export { INSPIRATION_ENRICH_SYSTEM_PROMPT } from "./inspiration.system";
 
 import { CONVERSATION_SYSTEM_PROMPT } from "./conversation.system";
 import { LYRICS_SYSTEM_PROMPT } from "./lyrics.system";
 import { MUSIC_SYSTEM_PROMPT } from "./music.system";
 import { BRIEF_SYSTEM_PROMPT } from "./brief.system";
+import { INSPIRATION_ENRICH_SYSTEM_PROMPT } from "./inspiration.system";
 
 export const PROMPT_VERSIONS = {
   conversation: "conversation-v1",
   lyrics: "lyrics-v1",
   music: "music-v1",
   brief: "brief-v1",
+  inspirationEnrich: "inspiration-enrich-v1",
 } as const;
+
+/** DeepSeek 系统 Prompt：灵感补全规范 + JSON 输出约束（只含补全字段，空值表示未补全）。 */
+export function buildInspirationEnrichSystemPrompt() {
+  return `${INSPIRATION_ENRICH_SYSTEM_PROMPT}\n必须只返回 JSON，结构为 {"title":string|null,"moods":string[]|null,"speedFeel":"slow"|"medium"|"fast"|"unknown"|null,"soundHints":string|null,"referenceWorks":string|null}。未补全的字段填 null（moods 填 null 而不是空数组）。title ≤20 字；moods 2–4 个词；soundHints/referenceWorks 为一句话或逗号分隔列表。不要返回任何额外字段或解释文字。`;
+}
 
 /** DeepSeek 系统 Prompt：创意简报规范 + JSON 输出约束。 */
 export function buildBriefSystemPrompt() {

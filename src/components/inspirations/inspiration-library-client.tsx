@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { InspirationSearchForm } from "./inspiration-search-form";
 import { InspirationDetailSheet } from "./inspiration-detail-sheet";
+import { ArchiveToProjectDialog } from "./archive-to-project-dialog";
 import {
   DEFAULT_FILTERS,
   parseFilters,
@@ -39,6 +40,7 @@ export function InspirationLibraryClient({ initialParams }: { initialParams: Rec
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [archiveId, setArchiveId] = useState<string | null>(null);
 
   const applyFilters = useCallback((next: LibFilters) => {
     setFilters(next);
@@ -92,9 +94,9 @@ export function InspirationLibraryClient({ initialParams }: { initialParams: Rec
         ) : data && data.items.length > 0 ? (
           <>
             {/* 桌面表格 */}
-            <div className="hidden overflow-hidden rounded-xl border border-border bg-card lg:block">
+            <div className="hidden overflow-hidden rounded-lg border border-border bg-card lg:block">
               <table className="w-full text-sm">
-                <thead className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+                <thead className="border-b border-border bg-muted/40 text-left text-xs font-medium text-muted-foreground">
                   <tr>
                     <th className="px-4 py-2.5 font-medium">灵感</th>
                     <th className="px-3 py-2.5 font-medium">类型</th>
@@ -104,14 +106,14 @@ export function InspirationLibraryClient({ initialParams }: { initialParams: Rec
                   </tr>
                 </thead>
                 <tbody>
-                  {data.items.map((item) => <Row key={item.id} item={item} onOpen={() => setSelectedId(item.id)} onProject={(id) => router.push(`/create/${id}`)} />)}
+                  {data.items.map((item) => <Row key={item.id} item={item} onOpen={() => setSelectedId(item.id)} onProject={(id) => router.push(`/create/${id}`)} onArchive={item.projectId ? undefined : () => setArchiveId(item.id)} />)}
                 </tbody>
               </table>
             </div>
             {/* H5 卡片 */}
             <div className="grid gap-2 lg:hidden">
               {data.items.map((item) => (
-                <button key={item.id} type="button" onClick={() => setSelectedId(item.id)} className="rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-muted/40">
+                <button key={item.id} type="button" onClick={() => setSelectedId(item.id)} className="rounded-lg border border-border bg-card p-3 text-left transition-colors hover:bg-muted/40">
                   <CardInner item={item} />
                 </button>
               ))}
@@ -119,19 +121,30 @@ export function InspirationLibraryClient({ initialParams }: { initialParams: Rec
             <Pagination filters={filters} data={data} onPage={(page) => applyFilters({ ...filters, page })} />
           </>
         ) : (
-          <EmptyState hasFilters={filters.query !== "" || filters.kinds.length > 0 || filters.attached !== "all" || filters.tags.length > 0} onClear={() => applyFilters({ ...DEFAULT_FILTERS, pageSize: filters.pageSize })} />
+          <EmptyState hasFilters={filters.query !== "" || filters.kinds.length > 0 || filters.attached !== "all" || filters.tags.length > 0 || filters.moods.length > 0 || Boolean(filters.createdFrom) || Boolean(filters.createdTo)} onClear={() => applyFilters({ ...DEFAULT_FILTERS, pageSize: filters.pageSize })} />
         )}
       </div>
 
       {selectedId && <InspirationDetailSheet recordId={selectedId} onClose={() => setSelectedId(null)} onProject={(id) => router.push(`/create/${id}`)} />}
+
+      {archiveId && (
+        <ArchiveToProjectDialog
+          recordId={archiveId}
+          onClose={() => setArchiveId(null)}
+          onSuccess={() => {
+            setArchiveId(null);
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function Row({ item, onOpen, onProject }: { item: LibItem; onOpen: () => void; onProject: (id: string) => void }) {
+function Row({ item, onOpen, onProject, onArchive }: { item: LibItem; onOpen: () => void; onProject: (id: string) => void; onArchive?: () => void }) {
   const Icon = KIND_ICON[item.primaryKind];
   return (
-    <tr className="border-b border-border last:border-b-0 hover:bg-muted/30">
+    <tr className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/30">
       <td className="px-4 py-3">
         <button type="button" onClick={onOpen} className="flex min-w-0 items-center gap-2.5 text-left">
           <Icon className="size-4 shrink-0 text-muted-foreground" />
@@ -146,7 +159,12 @@ function Row({ item, onOpen, onProject }: { item: LibItem; onOpen: () => void; o
         {item.projectId ? (
           <button type="button" onClick={() => onProject(item.projectId!)} className="truncate text-brand hover:underline">{item.projectName || "已归档项目"}</button>
         ) : (
-          <span className="text-muted-foreground">未归档</span>
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <span>未归档</span>
+            {onArchive && (
+              <button type="button" onClick={onArchive} className="text-brand hover:underline">归档</button>
+            )}
+          </span>
         )}
       </td>
       <td className="px-3 py-3 text-xs text-muted-foreground">v{item.versionCount}</td>
@@ -177,6 +195,9 @@ function ActiveChips({ filters, onClear }: { filters: LibFilters; onClear: (patc
   if (filters.query) chips.push({ label: `关键词：${filters.query}`, clear: () => onClear({ query: "" }) });
   filters.kinds.forEach((k) => chips.push({ label: KIND_LABEL[k], clear: () => onClear({ kinds: filters.kinds.filter((x) => x !== k) }) }));
   if (filters.attached !== "all") chips.push({ label: filters.attached === "attached" ? "已归档" : "未归档", clear: () => onClear({ attached: "all" }) });
+  if (filters.moods.length) chips.push({ label: `情绪：${filters.moods.join(",")}`, clear: () => onClear({ moods: [] }) });
+  if (filters.createdFrom) chips.push({ label: `起：${filters.createdFrom}`, clear: () => onClear({ createdFrom: "" }) });
+  if (filters.createdTo) chips.push({ label: `止：${filters.createdTo}`, clear: () => onClear({ createdTo: "" }) });
   if (chips.length === 0) return null;
   return (
     <div className="mt-3 flex flex-wrap items-center gap-1.5">
@@ -205,7 +226,7 @@ function Pagination({ filters, data, onPage }: { filters: LibFilters; data: LibL
 
 function EmptyState({ hasFilters, onClear }: { hasFilters: boolean; onClear: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-6 py-16 text-center">
+    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card px-6 py-16 text-center">
       <div className="flex size-10 items-center justify-center rounded-full bg-muted"><Lightbulb className="size-5 text-muted-foreground" /></div>
       <p className="mt-3 text-sm font-medium text-foreground">{hasFilters ? "没有匹配结果" : "还没有灵感记录"}</p>
       <p className="mt-1 text-xs text-muted-foreground">{hasFilters ? "试试清除部分筛选条件" : "把脑海里的旋律、画面或歌词先留下来"}</p>

@@ -124,6 +124,11 @@
 
 /* 组件内部长滚动区域：可滚动但不显示滚动条（页面级滚动条仍保留） */
 @layer utilities {
+  /* App 侧栏右侧主内容区：实际滚动在此容器，需预留 gutter，否则长内容出现滚动条时宽度被挤 */
+  .app-main-scroll {
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
   .scrollbar-none {
     scrollbar-width: none;
     -ms-overflow-style: none;

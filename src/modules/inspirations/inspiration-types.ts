@@ -37,6 +37,11 @@ export interface InspirationListFilters {
   kinds?: InspirationPrimaryKind[];
   attached?: "all" | "unattached" | "attached";
   tags?: string[];
+  /** 情绪筛选（tags jsonb @>，与 tags 同列，语义为「包含这些情绪词」）。 */
+  moods?: string[];
+  /** 创建时间范围（YYYY-MM-DD，闭区间，转 UTC 边界）。 */
+  createdFrom?: string;
+  createdTo?: string;
   sort?: "updated" | "created";
   page?: number;
   pageSize?: number;

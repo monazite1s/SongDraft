@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AudioLines, FileText, ImageIcon, RotateCcw, X, FolderInput } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { ArchiveToProjectDialog } from "./archive-to-project-dialog";
 import type { InspirationDetail } from "@/modules/inspirations/inspiration-types";
 import type { InspirationSnapshot } from "@/modules/inspirations/inspiration-schema";
 
@@ -15,6 +16,7 @@ type Envelope<T> = { ok: boolean; data?: T; error?: { message?: string } };
 
 const KIND_LABEL = { audio: "录音/音频", image: "图片", text: "文本" } as const;
 const REASON_LABEL: Record<string, string> = { manual: "手动保存", autosave: "自动保存", restore: "恢复", attach: "归档" };
+const SPEED_FEEL_LABEL: Record<string, string> = { slow: "慢", medium: "中", fast: "快", unknown: "未确定" };
 
 function snapshotSummary(s: InspirationSnapshot): string {
   if (s.title.trim()) return s.title;
@@ -29,6 +31,7 @@ export function InspirationDetailSheet({ recordId, onClose, onProject }: { recor
   const [error, setError] = useState("");
   const [restoringId, setRestoringId] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [showArchive, setShowArchive] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true); setError("");
@@ -84,10 +87,14 @@ export function InspirationDetailSheet({ recordId, onClose, onProject }: { recor
           ) : detail && snapshot ? (
             <div className="space-y-5">
               <SnapshotPreview snapshot={snapshot} />
-              {record?.projectId && (
+              {record && (
                 <div className="flex items-center justify-between rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
                   <span className="text-muted-foreground">所属项目</span>
-                  <button type="button" onClick={() => onProject(record.projectId!)} className="flex items-center gap-1 text-brand hover:underline"><FolderInput className="size-3.5" />打开制作台</button>
+                  {record.projectId ? (
+                    <button type="button" onClick={() => onProject(record.projectId!)} className="flex items-center gap-1 text-brand hover:underline"><FolderInput className="size-3.5" />打开制作台</button>
+                  ) : (
+                    <button type="button" onClick={() => setShowArchive(true)} className="flex items-center gap-1 text-brand hover:underline"><FolderInput className="size-3.5" />保存到项目</button>
+                  )}
                 </div>
               )}
               <VersionTimeline detail={detail} restoringId={restoringId} confirmId={confirmId} onAskRestore={(id) => setConfirmId(id)} onConfirmRestore={restore} onCancelConfirm={() => setConfirmId(null)} />
@@ -95,6 +102,17 @@ export function InspirationDetailSheet({ recordId, onClose, onProject }: { recor
           ) : null}
         </div>
       </aside>
+
+      {showArchive && (
+        <ArchiveToProjectDialog
+          recordId={recordId}
+          onClose={() => setShowArchive(false)}
+          onSuccess={() => {
+            setShowArchive(false);
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -108,6 +126,14 @@ function SnapshotPreview({ snapshot }: { snapshot: InspirationSnapshot }) {
           <p className="text-[11px] text-muted-foreground">类型 · {snapshot.text.inspirationType}</p>
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{snapshot.text.content}</p>
           {snapshot.text.moods.length > 0 && <Tags label="情绪" values={snapshot.text.moods} />}
+          {snapshot.text.speedFeel !== "unknown" && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-muted-foreground">速度</span>
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-foreground">{SPEED_FEEL_LABEL[snapshot.text.speedFeel] ?? snapshot.text.speedFeel}</span>
+            </div>
+          )}
+          {snapshot.text.soundHints.trim() && <Field label="音色 / 乐器" value={snapshot.text.soundHints} />}
+          {snapshot.text.referenceWorks.trim() && <Field label="参考作品" value={snapshot.text.referenceWorks} />}
         </div>
       )}
       {snapshot.primaryKind === "audio" && snapshot.audio && (
@@ -141,6 +167,15 @@ function Tags({ label, values }: { label: string; values: string[] }) {
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="text-[11px] text-muted-foreground">{label}</span>
       {values.map((v) => <span key={v} className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-foreground">{v}</span>)}
+    </div>
+  );
+}
+
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="space-y-0.5">
+      <span className="text-[11px] text-muted-foreground">{label}</span>
+      <p className="text-sm text-foreground">{value}</p>
     </div>
   );
 }

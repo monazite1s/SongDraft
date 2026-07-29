@@ -6,13 +6,18 @@
  * 布局：Sidebar + TopToolbar + 等分栏（素材构建 / 成果，权重 1:1；未来详情半屏为 1:1:1）。
  * 编排项目创建 → 草稿保存 → DeepSeek 精修歌词 SSE → MiniMax 生成 Demo。
  * `/create`、`/create/[projectId]` 挂载此组件；前端永不接触 Provider Key。
+ *
+ * 跨路由保活：编辑态写入 sessionStorage，切回制作台时回填（避免纯 useState 随卸载丢失）。
+ * 原始歌词与精修结果分轨：AI 只写 refinedLyrics，不覆盖 draft.lyrics。
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { cn } from '@/lib/utils'
 
 import type { ProjectDetail } from '@/modules/projects/project-types'
 import type { CreativeStreamEvent } from '@/modules/ai/lyric-assistant'
 import type { GenerationResult } from '@/modules/generation/generation-types'
+import { DRAFT_KEYS, loadClientDraft, saveClientDraft, clearClientDraft } from '@/lib/client-draft-store'
 import { Sidebar } from './sidebar'
 import { TopToolbar } from './top-toolbar'
 import { MaterialPanel, type MaterialDraft } from './material-panel'
@@ -21,6 +26,7 @@ import { BriefPanel } from './brief-panel'
 import { VersionModal } from './version-modal'
 import { ProviderModal } from './provider-modal'
 import { ShareModal } from './share-modal'
+import { SongDetailSheet, type SongDetailSheetCandidate } from './song-detail-sheet'
 import {
   DEFAULT_BRIEF,
   DEMO_CANDIDATES,
@@ -36,62 +42,129 @@ type ApiEnvelope<T> = { ok: boolean; data?: T; error?: { message?: string } }
 /** 创意简报接口响应（仅取前端需要的字段，避免引入 server-only 类型）。 */
 type BriefResponse = { id: string; payload: CreativeBrief; confirmedAt: string | null }
 
-const defaultLyrics = `路灯把影子拉得很长
-我数着水洼里的光
-没人问我要去哪儿
-就这样走到天亮`
+type WorkspaceSessionDraft = {
+  draft: MaterialDraft
+  originalLyrics: string
+  refinedLyrics: string | null
+  selectedInputs: InputKind[]
+  coverSet: boolean
+  quantity: number
+  extraPrompt: string
+  outputType: OutputType
+  phase: Phase
+  brief: CreativeBrief
+  briefId: string | null
+  projectTitle: string
+}
+
+function bootWorkspace(projectId: string, initialProject?: ProjectDetail): WorkspaceSessionDraft {
+  const cached = loadClientDraft<WorkspaceSessionDraft>(DRAFT_KEYS.workspace(projectId))
+  if (cached?.draft) return cached
+  return {
+    draft: {
+      creativePrompt: initialProject?.description ?? '',
+      lyrics: initialProject?.lyrics ?? '',
+      instruction: '',
+    },
+    originalLyrics: initialProject?.lyrics ?? '',
+    refinedLyrics: null,
+    selectedInputs: ['text', 'audio', 'image'],
+    coverSet: false,
+    quantity: 3,
+    extraPrompt: '',
+    outputType: 'song',
+    phase: 'idle',
+    brief: DEFAULT_BRIEF,
+    briefId: null,
+    projectTitle: initialProject?.title ?? '未命名项目',
+  }
+}
 
 export function SongDraftWorkspace({ initialProject }: { initialProject?: ProjectDetail }) {
   const router = useRouter()
+  // 惰性读取会话草稿：软导航 remount 时从 memory/sessionStorage 恢复，无 effect setState。
+  const [boot] = useState(() => bootWorkspace(initialProject?.id ?? '', initialProject))
   const [projectId, setProjectId] = useState(initialProject?.id ?? '')
-  const [projectTitle] = useState(initialProject?.title ?? '雨夜街角')
-  const [draft, setDraft] = useState<MaterialDraft>({
-    creativePrompt: initialProject?.description ?? '保留叙事感，让副歌更口语、更抓耳',
-    lyrics: initialProject?.lyrics ?? defaultLyrics,
-    instruction: '精修押韵，补一段副歌，控制在 4 行内',
-  })
-  const [originalLyrics, setOriginalLyrics] = useState(initialProject?.lyrics ?? defaultLyrics)
+  const [projectTitle] = useState(boot.projectTitle)
+  const [draft, setDraft] = useState<MaterialDraft>(boot.draft)
+  const [originalLyrics, setOriginalLyrics] = useState(boot.originalLyrics)
+  const [refinedLyrics, setRefinedLyrics] = useState<string | null>(boot.refinedLyrics)
   const [isRefining, setIsRefining] = useState(false)
   const [refinementMessage, setRefinementMessage] = useState('')
   const [refinementError, setRefinementError] = useState('')
   const [generatedCandidates, setGeneratedCandidates] = useState<typeof DEMO_CANDIDATES>([])
   const [provider, setProvider] = useState<Provider>(PROVIDERS[0])
-  const [outputType, setOutputType] = useState<OutputType>('song')
-  const [selectedInputs, setSelectedInputs] = useState<InputKind[]>(['text', 'audio', 'image'])
-  const [coverSet, setCoverSet] = useState(true)
-  const [quantity, setQuantity] = useState(3)
-  const [extraPrompt, setExtraPrompt] = useState('')
+  const [outputType, setOutputType] = useState<OutputType>(boot.outputType)
+  const [selectedInputs, setSelectedInputs] = useState<InputKind[]>(boot.selectedInputs)
+  const [coverSet, setCoverSet] = useState(boot.coverSet)
+  const [quantity, setQuantity] = useState(boot.quantity)
+  const [extraPrompt, setExtraPrompt] = useState(boot.extraPrompt)
   /** 创意简报：由 /api/projects/[id]/brief 生成，替换静态 DEFAULT_BRIEF。 */
-  const [brief, setBrief] = useState<CreativeBrief>(DEFAULT_BRIEF)
-  const [briefId, setBriefId] = useState<string | null>(null)
-  const [phase, setPhase] = useState<Phase>('idle')
+  const [brief, setBrief] = useState<CreativeBrief>(boot.brief)
+  const [briefId, setBriefId] = useState<string | null>(boot.briefId)
+  const [phase, setPhase] = useState<Phase>(boot.phase)
   const [busy, setBusy] = useState<Busy>(false)
   const [mainId, setMainId] = useState('c1')
   /** 已保存为正式版本的候选 ID（候选/版本拆分：未保存候选不会进入版本历史）。 */
   const [savedCandidateIds, setSavedCandidateIds] = useState<string[]>([])
+  /** 已保存候选 → 正式版本 UUID 的映射（用于详情栏「进入全屏详情」链接）。 */
+  const [savedVersionIdMap, setSavedVersionIdMap] = useState<Record<string, string>>({})
   const [saveState, setSaveState] = useState<SaveState>(initialProject ? 'saved' : 'dirty')
   const [saveError, setSaveError] = useState('')
   const [versionNo, setVersionNo] = useState(initialProject ? 1 : 0)
   const [versionsOpen, setVersionsOpen] = useState(false)
   const [providersOpen, setProvidersOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  /** 歌曲详情栏：选中的候选 id（SPEC §三.3，点击结果 Item 打开最右侧详情栏）。 */
+  const [detailId, setDetailId] = useState<string | null>(null)
+  const savingRef = useRef(false)
+
+  /** 有效歌词：有精修结果时优先用于生成 / 落库，原始输入框仍保留 draft.lyrics。 */
+  const effectiveLyrics = refinedLyrics?.trim() ? refinedLyrics : draft.lyrics
+
+  // 仅写入外部存储，不在 effect 内 setState；跳过首次避免 SSR 空初值覆盖会话草稿。
+  const skipPersist = useRef(true)
+  useEffect(() => {
+    if (skipPersist.current) {
+      skipPersist.current = false
+      return
+    }
+    saveClientDraft(DRAFT_KEYS.workspace(projectId), {
+      draft,
+      originalLyrics,
+      refinedLyrics,
+      selectedInputs,
+      coverSet,
+      quantity,
+      extraPrompt,
+      outputType,
+      phase,
+      brief,
+      briefId,
+      projectTitle,
+    } satisfies WorkspaceSessionDraft)
+  }, [projectId, draft, originalLyrics, refinedLyrics, selectedInputs, coverSet, quantity, extraPrompt, outputType, phase, brief, briefId, projectTitle])
 
   const candidates = useMemo(() => {
-    if (generatedCandidates.length) return generatedCandidates
-    const base = DEMO_CANDIDATES
-    if (quantity <= base.length) return base.slice(0, quantity)
-    const extra = Array.from({ length: quantity - base.length }, (_, i) => {
-      const idx = base.length + i
-      const candidate = base[idx % base.length]
-      return {
-        ...candidate,
-        id: `c${idx + 1}`,
-        title: `${projectTitle} · 候选 ${String.fromCharCode(65 + idx)}`,
-        isMain: false,
-      }
-    })
-    return [...base, ...extra]
-  }, [generatedCandidates, projectTitle, quantity])
+    if (!generatedCandidates.length) return []
+    if (quantity <= generatedCandidates.length) return generatedCandidates.slice(0, quantity)
+    return generatedCandidates
+  }, [generatedCandidates, quantity])
+
+  /** 详情栏数据：选中候选 + 版本信息 + 歌词摘要（SPEC §三.3）。 */
+  const detailData = useMemo<SongDetailSheetCandidate | null>(() => {
+    if (!detailId) return null
+    const candidate = candidates.find((c) => c.id === detailId) ?? null
+    if (!candidate) return null
+    const isSaved = savedCandidateIds.includes(detailId)
+    const versionId = savedVersionIdMap[detailId] ?? null
+    return {
+      candidate,
+      versionNo: isSaved ? versionNo : null,
+      versionId,
+      lyricsExcerpt: effectiveLyrics.split('\n').slice(0, 8).join('\n'),
+    }
+  }, [detailId, candidates, savedCandidateIds, savedVersionIdMap, versionNo, effectiveLyrics])
 
   function markDirty() {
     if (saveState !== 'saving') setSaveState('dirty')
@@ -117,14 +190,31 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
       body: JSON.stringify({
         title: projectTitle,
         description: draft.creativePrompt,
-        lyrics: draft.lyrics,
+        lyrics: effectiveLyrics,
       }),
     })
     const body = await response.json() as ApiEnvelope<ProjectDetail>
     if (!response.ok || !body.data?.id) throw new Error(body.error?.message || '项目保存失败')
-    setProjectId(body.data.id)
+    const createdId = body.data.id
+    // 迁移会话草稿到新项目 key，避免 /create → /create/[id] remount 丢态。
+    saveClientDraft(DRAFT_KEYS.workspace(createdId), {
+      draft,
+      originalLyrics,
+      refinedLyrics,
+      selectedInputs,
+      coverSet,
+      quantity,
+      extraPrompt,
+      outputType,
+      phase,
+      brief,
+      briefId,
+      projectTitle,
+    } satisfies WorkspaceSessionDraft)
+    clearClientDraft(DRAFT_KEYS.workspace(''))
+    setProjectId(createdId)
     setVersionNo(1)
-    return body.data.id
+    return createdId
   }
 
   /** 保存草稿后 POST /api/generation-jobs，将候选映射到 BriefPanel。 */
@@ -136,7 +226,7 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
       body: JSON.stringify({
         projectId: id,
         briefId,
-        lyrics: draft.lyrics,
+        lyrics: effectiveLyrics,
         idempotencyKey: crypto.randomUUID(),
       }),
     })
@@ -168,7 +258,7 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
     const response = await fetch(`/api/projects/${id}/draft`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ description: draft.creativePrompt, currentLyrics: draft.lyrics }),
+      body: JSON.stringify({ description: draft.creativePrompt, currentLyrics: effectiveLyrics }),
     })
     if (!response.ok) {
       const body = await response.json().catch(() => null) as ApiEnvelope<unknown> | null
@@ -184,7 +274,7 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
     return createdId
   }
 
-  /** 精修歌词：POST /api/creative-chat/stream，消费 SSE 写回 lyrics。 */
+  /** 精修歌词：POST /api/creative-chat/stream；结果只写入 refinedLyrics，不覆盖原始输入。 */
   async function refineLyrics() {
     if (isRefining || !draft.lyrics.trim()) return
     setIsRefining(true)
@@ -216,7 +306,7 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
           if (!line) continue
           const event = JSON.parse(line.slice(6)) as CreativeStreamEvent
           if (event.type === 'message_delta') setRefinementMessage((current) => current + event.delta)
-          if (event.type === 'lyrics_replace') setDraft((current) => ({ ...current, lyrics: event.lyrics }))
+          if (event.type === 'lyrics_replace') setRefinedLyrics(event.lyrics)
           if (event.type === 'error') throw new Error(event.message)
         }
       }
@@ -229,7 +319,8 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
   }
 
   async function save() {
-    if (saveState === 'saving') return
+    if (savingRef.current || saveState === 'saving') return
+    savingRef.current = true
     setSaveState('saving')
     setSaveError('')
     try {
@@ -244,6 +335,8 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
     } catch (error) {
       setSaveState('error')
       setSaveError(error instanceof Error ? error.message : '保存失败，请重试')
+    } finally {
+      savingRef.current = false
     }
   }
 
@@ -273,6 +366,7 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
     setBusy('generate')
     setSaveError('')
     setSavedCandidateIds([])
+    setSavedVersionIdMap({})
     try {
       const id = await ensureProject()
       // 生成即确认：先把当前 outputType/额外要求/数量 PATCH 进简报，再据此生成（P0-3）。
@@ -311,6 +405,13 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
         candidateIds.forEach((id) => next.add(id))
         return [...next]
       })
+      // 保存结果按 candidateIds 顺序返回；建立 候选 id → 版本 uuid 映射。
+      const mapping: Record<string, string> = {}
+      body.data.saved.forEach((entry, index) => {
+        const candidateId = candidateIds[index]
+        if (candidateId) mapping[candidateId] = entry.id
+      })
+      setSavedVersionIdMap((prev) => ({ ...prev, ...mapping }))
       setVersionNo((current) => current + body.data!.saved.length)
       setSaveState('saved')
     } catch (error) {
@@ -336,9 +437,16 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
         />
         {/*
           等分栏：minmax(0,1fr) + 子项 min-w-0，避免内容 min-content 把某一栏撑宽。
-          当前两栏 1:1；未来详情半屏打开时改为三列 1:1:1（同一套 1fr 权重）。
+          详情栏关闭时两栏 1:1；打开时切换三栏 1:1:1（SPEC §三.3 详情栏打开形成三栏）。
         */}
-        <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:overflow-hidden">
+        <div
+          className={cn(
+            'grid min-h-0 flex-1 grid-cols-1 overflow-y-auto xl:overflow-hidden',
+            detailId
+              ? 'xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]'
+              : 'xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]',
+          )}
+        >
           <div className="scrollbar-none min-w-0 border-b border-border bg-card/40 xl:border-b-0 xl:border-r xl:overflow-y-auto">
             <MaterialPanel
               selectedInputs={selectedInputs}
@@ -348,6 +456,7 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
               draft={draft}
               onDraftChange={updateDraft}
               originalLyrics={originalLyrics}
+              refinedLyrics={refinedLyrics}
               isRefining={isRefining}
               refinementMessage={refinementMessage}
               refinementError={refinementError}
@@ -361,7 +470,7 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
               }
             />
           </div>
-          <div className="scrollbar-none min-w-0 xl:overflow-y-auto">
+          <div className="scrollbar-none min-w-0 xl:border-r xl:overflow-y-auto">
             <BriefPanel
               phase={phase}
               busy={busy}
@@ -377,13 +486,22 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
               savedCandidateIds={savedCandidateIds}
               mainId={mainId}
               onSetMain={(id) => { setMainId(id); markDirty() }}
+              onOpenDetail={(id) => setDetailId(id)}
               onSaveVersion={(ids) => void handleSaveVersion(ids)}
             />
           </div>
+          {detailId && (
+            <SongDetailSheet
+              open
+              onClose={() => setDetailId(null)}
+              projectId={projectId}
+              data={detailData}
+            />
+          )}
         </div>
       </div>
       {saveError && <div role="alert" className="fixed bottom-5 left-1/2 z-[80] -translate-x-1/2 rounded-lg bg-destructive px-4 py-2 text-sm text-white shadow-lg">{saveError}</div>}
-      <VersionModal open={versionsOpen} onClose={() => setVersionsOpen(false)} />
+      <VersionModal open={versionsOpen} onClose={() => setVersionsOpen(false)} projectId={projectId} />
       <ProviderModal open={providersOpen} onClose={() => setProvidersOpen(false)} current={provider} onSelect={setProvider} />
       <ShareModal open={shareOpen} onClose={() => setShareOpen(false)} />
     </div>

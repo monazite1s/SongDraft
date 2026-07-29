@@ -23,7 +23,7 @@ test("creates a private mock link and accepts a guest comment", async () => {
   const comment = await service.comment(link.token, { guestName: "制作人", content: "副歌可以更早进入", atMs: 12000 }, null);
   if (original) process.env.DATABASE_URL = original;
   expect(comment.author).toBe("制作人");
-  expect((await service.getPublic(link.token)).comments).toHaveLength(1);
+  expect((await service.getPublic(link.token, owner)).comments).toHaveLength(1);
   const ownerComments = await service.listComments(owner, project.id);
   expect(ownerComments).toHaveLength(1);
   await service.markCommentRead(owner, ownerComments[0]!.id);
@@ -31,5 +31,5 @@ test("creates a private mock link and accepts a guest comment", async () => {
   await service.deleteComment(owner, ownerComments[0]!.id);
   expect(await service.listComments(owner, project.id)).toHaveLength(0);
   await service.revoke(owner, link.id);
-  await expect(service.getPublic(link.token)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  await expect(service.getPublic(link.token, owner)).rejects.toMatchObject({ code: "NOT_FOUND" });
 });

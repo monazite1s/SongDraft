@@ -16,6 +16,7 @@ import {
 const credentialsSchema = z.object({
   email: z.string().email("请输入有效邮箱"),
   password: z.string().min(8, "密码至少 8 位"),
+  redirect: z.string().optional(),
 });
 
 const registrationSchema = credentialsSchema.extend({
@@ -31,16 +32,27 @@ function ensureAuthConfigured(path: "/login" | "/register") {
   if (error) redirectWithError(path, error);
 }
 
+/**
+ * 安全跳回路径校验：只允许以 "/" 开头且不含 "//" 的相对路径，防开放重定向。
+ */
+function safeRedirectTarget(raw: string | undefined): string {
+  if (!raw || !raw.startsWith("/") || raw.includes("//")) return "/";
+  return raw;
+}
+
 export async function loginAction(formData: FormData) {
-  if (isMockAuthEnabled()) redirect("/");
+  if (isMockAuthEnabled()) {
+    redirect(safeRedirectTarget(typeof formData.get("redirect") === "string" ? (formData.get("redirect") as string) : undefined));
+  }
   ensureAuthConfigured("/login");
   const parsed = credentialsSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) redirectWithError("/login", parsed.error.issues[0]?.message ?? "登录信息无效");
+  const redirectTo = safeRedirectTarget(parsed.data.redirect);
 
   const supabase = await createAuthServerClient();
-  const { error } = await supabase.auth.signInWithPassword(parsed.data);
+  const { error } = await supabase.auth.signInWithPassword({ email: parsed.data.email, password: parsed.data.password });
   if (error) redirect(`/login?error=${encodeURIComponent("邮箱或密码不正确")}`);
-  redirect("/");
+  redirect(redirectTo);
 }
 
 export async function registerAction(formData: FormData) {
@@ -49,10 +61,11 @@ export async function registerAction(formData: FormData) {
   const parsed = registrationSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) redirectWithError("/register", parsed.error.issues[0]?.message ?? "注册信息无效");
 
-  const { displayName, ...credentials } = parsed.data;
+  const { displayName, email, password, redirect: _redirect } = parsed.data;
   const supabase = await createAuthServerClient();
   const { error } = await supabase.auth.signUp({
-    ...credentials,
+    email,
+    password,
     options: { data: { display_name: displayName } },
   });
   if (error) redirect(`/register?error=${encodeURIComponent("注册失败，请稍后重试")}`);

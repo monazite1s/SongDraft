@@ -14,7 +14,7 @@ export default function Loading() {
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
       <div
-        className="flex min-w-0 flex-1 flex-col overflow-y-auto p-5 lg:p-8"
+        className="app-main-scroll flex min-w-0 flex-1 flex-col p-5 lg:p-8"
         aria-busy="true"
         aria-label="内容加载中"
       >

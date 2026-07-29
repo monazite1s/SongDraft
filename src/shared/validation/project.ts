@@ -2,22 +2,17 @@ import { z } from "zod";
 
 const optionalText = z.string().trim().max(5_000).optional();
 
-export const createProjectSchema = z
-  .object({
-    title: z.string().trim().min(1).max(120),
-    description: z.string().trim().max(1_000).optional(),
-    lyrics: optionalText,
-    melodyAssetId: z.string().uuid().optional(),
-    visualAssetId: z.string().uuid().optional(),
-    artistId: z.string().trim().max(80).optional(),
-    eventId: z.string().trim().max(80).optional(),
-  })
-  .superRefine((value, context) => {
-    const hasText = Boolean(value.description || value.lyrics);
-    if (!hasText && !value.melodyAssetId && !value.visualAssetId) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: "至少添加一种灵感素材" });
-    }
-  });
+// 仅 title 必填：制作台「新建项目」允许先建空项目，素材在制作台内补充（SPEC §2）。
+// 灵感保存（attach new_project）仍会带 description/lyrics，天然满足「有内容」。
+export const createProjectSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(1_000).optional(),
+  lyrics: optionalText,
+  melodyAssetId: z.string().uuid().optional(),
+  visualAssetId: z.string().uuid().optional(),
+  artistId: z.string().trim().max(80).optional(),
+  eventId: z.string().trim().max(80).optional(),
+});
 
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 

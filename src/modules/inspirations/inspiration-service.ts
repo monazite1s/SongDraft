@@ -46,6 +46,11 @@ export class InspirationService {
     return { id: recordId, deleted: true };
   }
 
+  /** 项目详情页：按项目归属列出关联灵感。 */
+  async listByProject(ownerId: string, projectId: string) {
+    return this.repository.listByProject(ownerId, projectId);
+  }
+
   /** 版本时间线（只显真实变化快照，按版本号倒序）。 */
   async listVersions(ownerId: string, recordId: string) {
     const owned = await this.repository.findOwned(recordId, ownerId);

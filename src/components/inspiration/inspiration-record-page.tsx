@@ -3,17 +3,44 @@
 /**
  * 灵感记录页主流程（docs/SPEC.md）：先创建/更新灵感记录，再上传媒体，最后保存到新项目或已有项目。
  */
-import { AudioLines, Check, ChevronDown, FileText, Image as ImageIcon, Lightbulb, Plus, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { AudioLines, Check, ChevronDown, FileText, Image as ImageIcon, Lightbulb, Plus, Sparkles, Wand2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { InspirationSnapshot } from "@/modules/inspirations/inspiration-schema";
 import type { ProjectListPage } from "@/modules/projects/project-types";
+import { DRAFT_KEYS, loadClientDraft, saveClientDraft } from "@/lib/client-draft-store";
 import { cn } from "@/lib/utils";
+import { ModeTag } from "@/components/inspire/ui";
 import { InspirationMediaCapture, type CapturedMedia } from "./inspiration-media-capture";
 
 type CaptureKind = "audio" | "image" | "text";
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 type RecordResponse = { ok: boolean; data?: { id: string; versionCount: number; projectId?: string | null }; error?: { message?: string } };
+
+/** /api/inspirations/enrich 返回的补全字段集合（空缺字段才会被建议）。 */
+type Enrichment = {
+  title: string | null;
+  moods: string[] | null;
+  speedFeel: "slow" | "medium" | "fast" | "unknown" | null;
+  soundHints: string | null;
+  referenceWorks: string | null;
+  mode: "real" | "simulated";
+};
+
+/** 灵感页会话草稿：同 tab 切到制作台再回来时回填，避免纯 useState 随卸载丢失。 */
+type InspirationSessionDraft = {
+  kind: CaptureKind;
+  recordId: string | null;
+  title: string;
+  text: string;
+  textType: "lyric" | "concept" | "story" | "melody_note" | "arrangement" | "other";
+  moods: string[];
+  speedFeel: "slow" | "medium" | "fast" | "unknown";
+  soundHints: string;
+  referenceWorks: string;
+  note: string;
+  assets: CapturedMedia[];
+};
 
 const kindTabs = [
   { id: "audio" as const, label: "录音 / 音频", hint: "捕捉旋律、节奏或环境声", icon: AudioLines },
@@ -25,17 +52,18 @@ const moodOptions = ["治愈", "克制", "明亮", "迷离", "热烈", "怀旧"]
 
 /** 落地页采集流：先拥有灵感 record，再挂载媒体上传。 */
 export function InspirationRecordPage() {
-  const [kind, setKind] = useState<CaptureKind>("audio");
-  const [recordId, setRecordId] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
-  const [text, setText] = useState("");
-  const [textType, setTextType] = useState<"lyric" | "concept" | "story" | "melody_note" | "arrangement" | "other">("lyric");
-  const [moods, setMoods] = useState<string[]>([]);
-  const [speedFeel, setSpeedFeel] = useState<"slow" | "medium" | "fast" | "unknown">("unknown");
-  const [soundHints, setSoundHints] = useState("");
-  const [referenceWorks, setReferenceWorks] = useState("");
-  const [note, setNote] = useState("");
-  const [assets, setAssets] = useState<CapturedMedia[]>([]);
+  const [boot] = useState(() => loadClientDraft<InspirationSessionDraft>(DRAFT_KEYS.inspiration));
+  const [kind, setKind] = useState<CaptureKind>(boot?.kind ?? "audio");
+  const [recordId, setRecordId] = useState<string | null>(boot?.recordId ?? null);
+  const [title, setTitle] = useState(boot?.title ?? "");
+  const [text, setText] = useState(boot?.text ?? "");
+  const [textType, setTextType] = useState<"lyric" | "concept" | "story" | "melody_note" | "arrangement" | "other">(boot?.textType ?? "lyric");
+  const [moods, setMoods] = useState<string[]>(boot?.moods ?? []);
+  const [speedFeel, setSpeedFeel] = useState<"slow" | "medium" | "fast" | "unknown">(boot?.speedFeel ?? "unknown");
+  const [soundHints, setSoundHints] = useState(boot?.soundHints ?? "");
+  const [referenceWorks, setReferenceWorks] = useState(boot?.referenceWorks ?? "");
+  const [note, setNote] = useState(boot?.note ?? "");
+  const [assets, setAssets] = useState<CapturedMedia[]>(boot?.assets ?? []);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [message, setMessage] = useState("");
   const [savePanelOpen, setSavePanelOpen] = useState(false);
@@ -43,6 +71,9 @@ export function InspirationRecordPage() {
   const [projectTitle, setProjectTitle] = useState("");
   const [projects, setProjects] = useState<ProjectListPage["items"]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [enriching, setEnriching] = useState(false);
+  const [enrichError, setEnrichError] = useState("");
+  const [enrichment, setEnrichment] = useState<Enrichment | null>(null);
 
   const snapshot = useMemo<InspirationSnapshot | null>(() => {
     const common = { primaryKind: kind, title, tags: moods } as const;
@@ -67,7 +98,70 @@ export function InspirationRecordPage() {
     setAssets([]);
     setStatus("idle");
     setMessage("");
+    setEnrichment(null);
+    setEnrichError("");
   }
+
+  /** 调用 AI 补全：把当前表单拼成 snapshot 发给后端，返回空缺字段的建议值。 */
+  async function runEnrich() {
+    // 表单尚未构成有效 snapshot（无实质内容）时，构造一个最小输入也接受——补全主要服务于标题等空缺字段。
+    const inputSnapshot: InspirationSnapshot = kind === "text"
+      ? { primaryKind: "text", title, tags: moods, text: { inspirationType: textType, content: text, moods, speedFeel, soundHints, referenceWorks, advanced: {} } }
+      : kind === "audio"
+        ? { primaryKind: "audio", title, tags: moods, audio: { note, items: assets.length ? assets.map((asset) => ({ assetId: asset.id, label: asset.label, note, role: "other" as const })) : [{ assetId: "00000000-0000-0000-0000-000000000000", label: note || "音频灵感", note, role: "other" as const }] } }
+        : { primaryKind: "image", title, tags: moods, image: { note, assetIds: assets.length ? assets.map((asset) => asset.id) : ["00000000-0000-0000-0000-000000000000"], moods } };
+    setEnriching(true);
+    setEnrichError("");
+    try {
+      const response = await fetch("/api/inspirations/enrich", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ snapshot: inputSnapshot }),
+      });
+      const body = await response.json() as { ok: boolean; data?: Enrichment; error?: { message?: string } };
+      if (!response.ok || !body.data) throw new Error(body.error?.message || "AI 补全失败，请重试");
+      setEnrichment(body.data);
+      applyEnrichment(body.data);
+    } catch (error) {
+      setEnrichError(error instanceof Error ? error.message : "AI 补全失败，请重试");
+    } finally {
+      setEnriching(false);
+    }
+  }
+
+  /** 把补全字段回填到表单（仅空缺字段，不覆盖用户已填）。 */
+  function applyEnrichment(next: Enrichment) {
+    if (next.title && !title.trim()) setTitle(next.title);
+    if (next.moods?.length) {
+      const merged = Array.from(new Set([...moods, ...next.moods])).slice(0, 11);
+      setMoods(merged);
+    }
+    if (next.speedFeel && next.speedFeel !== "unknown" && speedFeel === "unknown") setSpeedFeel(next.speedFeel);
+    if (next.soundHints && !soundHints.trim()) setSoundHints(next.soundHints);
+    if (next.referenceWorks && !referenceWorks.trim()) setReferenceWorks(next.referenceWorks);
+  }
+
+  // 仅写入外部存储；跳过首次 effect，避免 SSR 空初值覆盖已有会话草稿。
+  const skipPersist = useRef(true);
+  useEffect(() => {
+    if (skipPersist.current) {
+      skipPersist.current = false;
+      return;
+    }
+    saveClientDraft(DRAFT_KEYS.inspiration, {
+      kind,
+      recordId,
+      title,
+      text,
+      textType,
+      moods,
+      speedFeel,
+      soundHints,
+      referenceWorks,
+      note,
+      assets,
+    } satisfies InspirationSessionDraft);
+  }, [kind, recordId, title, text, textType, moods, speedFeel, soundHints, referenceWorks, note, assets]);
 
   useEffect(() => {
     if (!recordId || !snapshot) return;
@@ -189,16 +283,23 @@ export function InspirationRecordPage() {
         </header>
 
         <section className="mt-7 overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-          <div role="tablist" aria-label="灵感类型" className="grid grid-cols-3 border-b border-border">
+          {/* pill 风格 tab：参照 material-panel TABS（flex gap-1 + 每项 rounded-lg border + 选中 shadow + 指示点）。 */}
+          <div role="tablist" aria-label="灵感类型" className="flex gap-1 border-b border-border p-2">
             {kindTabs.map((tab) => {
               const Icon = tab.icon;
               const active = tab.id === kind;
-              return <button key={tab.id} type="button" role="tab" aria-selected={active} onClick={() => selectKind(tab.id)} className={cn("flex min-h-20 items-center justify-center gap-2 border-r border-border px-3 text-sm transition-colors last:border-r-0", active ? "bg-brand-muted text-foreground" : "bg-card text-muted-foreground hover:bg-muted/60")}><Icon className="size-4" /><span className="hidden sm:inline">{tab.label}</span><span className="sm:hidden">{tab.id === "audio" ? "音频" : tab.id === "image" ? "图片" : "文本"}</span></button>;
+              // 已录入素材数作为选中指示点（文本=内容长度，音频/图片=素材条数）。
+              const count = tab.id === "text" ? (text.trim() ? 1 : 0) : assets.length;
+              return <button key={tab.id} type="button" role="tab" aria-selected={active} onClick={() => selectKind(tab.id)} className={cn("flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-2 py-2.5 text-sm font-medium transition-colors", active ? "border-border bg-card text-foreground shadow-[0_1px_2px_rgba(16,24,40,0.04)]" : "border-transparent text-muted-foreground hover:bg-muted")}><Icon className="size-4" /><span className="hidden sm:inline">{tab.label}</span><span className="sm:hidden">{tab.id === "audio" ? "音频" : tab.id === "image" ? "图片" : "文本"}</span>{count > 0 && <span className="size-1.5 rounded-full bg-brand" aria-label={`已录入 ${count} 项`} />}</button>;
             })}
           </div>
 
           <div className="p-5 sm:p-7">
-            <div className="mb-6 flex items-start justify-between gap-4"><div><h2 className="text-base font-semibold">{kindTabs.find((tab) => tab.id === kind)?.label}</h2><p className="mt-1 text-sm text-muted-foreground">{kindTabs.find((tab) => tab.id === kind)?.hint}</p></div><label className="hidden text-xs text-muted-foreground sm:block">标题（可选）<input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={60} placeholder="给这条灵感起个名字" className="ml-2 w-44 rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring" /></label></div>
+            <div className="mb-6 flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-base font-semibold">{kindTabs.find((tab) => tab.id === kind)?.label}</h2><p className="mt-1 text-sm text-muted-foreground">{kindTabs.find((tab) => tab.id === kind)?.hint}</p></div><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => void runEnrich()} disabled={enriching} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-wait disabled:opacity-60"><Wand2 className={cn("size-4 text-brand", enriching && "animate-pulse")} />{enriching ? "AI 补全中…" : "AI 补全"}</button><label className="block text-xs text-muted-foreground">标题（可选）<input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={60} placeholder="给这条灵感起个名字" className="ml-2 w-40 rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring" /></label></div></div>
+
+            {/* AI 补全结果提示：显示来源（real/simulated）+ 已补字段；用户可忽略。 */}
+            {enrichError && <p role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{enrichError}</p>}
+            {enrichment && !enrichError && <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-brand/20 bg-brand-muted/40 px-3 py-2 text-xs text-foreground"><ModeTag mode={enrichment.mode} /><span>已补全空缺字段：</span>{enrichment.title && <span className="rounded bg-background/60 px-1.5 py-0.5">标题</span>}{enrichment.moods && <span className="rounded bg-background/60 px-1.5 py-0.5">情绪</span>}{enrichment.speedFeel && <span className="rounded bg-background/60 px-1.5 py-0.5">速度</span>}{enrichment.soundHints && <span className="rounded bg-background/60 px-1.5 py-0.5">音色</span>}{enrichment.referenceWorks && <span className="rounded bg-background/60 px-1.5 py-0.5">参考</span>}<span className="text-muted-foreground">可继续编辑或忽略</span></div>}
 
             {kind === "text" && <TextCapture text={text} setText={setText} textType={textType} setTextType={setTextType} moods={moods} setMoods={setMoods} speedFeel={speedFeel} setSpeedFeel={setSpeedFeel} soundHints={soundHints} setSoundHints={setSoundHints} referenceWorks={referenceWorks} setReferenceWorks={setReferenceWorks} />}
             {kind !== "text" && <MediaCapture kind={kind} recordId={mediaRecordId} note={note} setNote={setNote} assets={assets} onPrepare={ensureMediaDraft} onUploaded={handleMediaUploaded} />}

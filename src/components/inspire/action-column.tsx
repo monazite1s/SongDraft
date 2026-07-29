@@ -44,7 +44,7 @@ export function WorkspacePrimaryAction({
         {analyzing ? '正在生成简报…' : '生成简报'}
       </button>
       <p className="text-center text-[11px] text-muted-foreground">
-        解析已选素材并生成结构化创意简报
+        解析已选素材并生成结构化创意简报；精修歌词为可选步骤
       </p>
     </div>
   )

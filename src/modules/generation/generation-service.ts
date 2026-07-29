@@ -6,7 +6,7 @@
  *   Brief/Plan/Job/Candidate，返回「未保存候选」，不创建 demo_versions。
  * - saveCandidates：将选中候选事务转为正式版本（demo_versions + demo_assets）并回填
  *   savedVersionId，首个保存项设为主版本。
- * - listVersions / setMain / restore：作用于已保存版本。
+ * - listVersions / setMain / restore / delete：作用于已保存版本。
  * 入口：POST /api/generation-jobs、POST /api/generation-candidates/save。
  */
 import { and, desc, eq, inArray } from "drizzle-orm";
@@ -25,7 +25,7 @@ import {
 import type { AuthUser } from "@/modules/auth/types";
 import { getProjectRepository } from "@/modules/projects/project-repository";
 import { DomainError } from "@/shared/errors/domain-error";
-import type { DemoCandidate, DemoVersionView, GenerationResult, SaveCandidatesResult } from "./generation-types";
+import type { DemoCandidate, DemoVersionView, GenerationResult, RecentSongItem, SaveCandidatesResult } from "./generation-types";
 import { getMusicGenerator, type GeneratedDemo, type MusicGenerationInput } from "./music-generator";
 import { routeGeneration } from "./provider-router";
 import { buildMusicPrompt } from "@/modules/ai/prompts";
@@ -251,13 +251,37 @@ export class GenerationService {
   async listVersions(owner: AuthUser, projectId: string): Promise<DemoVersionView[]> {
     const project = await getProjectRepository().findOwned(projectId, owner.id);
     if (!project) throw new DomainError("NOT_FOUND", 404, "项目不存在或无权访问");
-    if (!process.env.DATABASE_URL) return [...mockVersionIndex.entries()].filter(([, entry]) => entry.projectId === projectId && entry.ownerId === owner.id).map(([id, entry]) => ({ id, versionNo: entry.versionNo, title: entry.candidate.title, variation: entry.candidate.variation, isMain: entry.isMain, createdAt: entry.createdAt, executionKind: entry.candidate.executionKind, hasAudio: entry.candidate.hasAudio, audioUrl: entry.candidate.audioUrl, restoredFromVersionId: typeof entry.snapshot.restoredFromVersionId === "string" ? entry.snapshot.restoredFromVersionId : null })).sort((a, b) => b.versionNo - a.versionNo);
-    const rows = await getDatabase().select({ id: demoVersions.id, versionNo: demoVersions.versionNo, isMain: demoVersions.isMain, createdAt: demoVersions.createdAt, snapshot: demoVersions.snapshot, executionKind: demoAssets.executionKind, metadata: demoAssets.metadata }).from(demoVersions).leftJoin(demoAssets, eq(demoAssets.versionId, demoVersions.id)).where(eq(demoVersions.projectId, projectId)).orderBy(desc(demoVersions.versionNo));
-    return rows.map((row) => ({ id: row.id, versionNo: row.versionNo, title: String(row.metadata?.title || `版本 V${row.versionNo}`), variation: String(row.snapshot.variation || "Demo"), isMain: row.isMain, createdAt: row.createdAt.toISOString(), executionKind: row.executionKind || "simulated", hasAudio: Boolean(row.metadata?.hasAudio), audioUrl: typeof row.metadata?.audioUrl === "string" ? row.metadata.audioUrl : null, restoredFromVersionId: typeof row.snapshot.restoredFromVersionId === "string" ? row.snapshot.restoredFromVersionId : null }));
+    if (!process.env.DATABASE_URL) return [...mockVersionIndex.entries()].filter(([, entry]) => entry.projectId === projectId && entry.ownerId === owner.id).map(([id, entry]) => ({ id, versionNo: entry.versionNo, title: entry.candidate.title, variation: entry.candidate.variation, isMain: entry.isMain, createdAt: entry.createdAt, executionKind: entry.candidate.executionKind, hasAudio: entry.candidate.hasAudio, audioUrl: entry.candidate.audioUrl, restoredFromVersionId: typeof entry.snapshot.restoredFromVersionId === "string" ? entry.snapshot.restoredFromVersionId : null, parentId: typeof entry.snapshot.parentId === "string" ? entry.snapshot.parentId : null })).sort((a, b) => b.versionNo - a.versionNo);
+    const rows = await getDatabase().select({ id: demoVersions.id, parentId: demoVersions.parentId, versionNo: demoVersions.versionNo, isMain: demoVersions.isMain, createdAt: demoVersions.createdAt, snapshot: demoVersions.snapshot, executionKind: demoAssets.executionKind, metadata: demoAssets.metadata }).from(demoVersions).leftJoin(demoAssets, eq(demoAssets.versionId, demoVersions.id)).where(eq(demoVersions.projectId, projectId)).orderBy(desc(demoVersions.versionNo));
+    return rows.map((row) => ({ id: row.id, versionNo: row.versionNo, title: String(row.metadata?.title || `版本 V${row.versionNo}`), variation: String(row.snapshot.variation || "Demo"), isMain: row.isMain, createdAt: row.createdAt.toISOString(), executionKind: row.executionKind || "simulated", hasAudio: Boolean(row.metadata?.hasAudio), audioUrl: typeof row.metadata?.audioUrl === "string" ? row.metadata.audioUrl : null, restoredFromVersionId: typeof row.snapshot.restoredFromVersionId === "string" ? row.snapshot.restoredFromVersionId : null, parentId: row.parentId ?? null }));
   }
 
-  async getCurrentAudio(owner: AuthUser, projectId: string) {
-    const versions = await this.listVersions(owner, projectId);
+  /**
+   * 最近歌曲聚合（侧栏「最近歌曲」）：取用户最近 N 个项目，
+   * 每个项目取代表版本（主版本优先，否则版本号最大者），返回每项目至多 1 首。
+   * 项目无版本时不计入（无歌曲可展示）。
+   */
+  async listRecentSongs(owner: AuthUser, limit = 5): Promise<RecentSongItem[]> {
+    const safeLimit = Number.isFinite(limit) ? Math.min(20, Math.max(1, Math.floor(limit))) : 5;
+    const recentProjects = await getProjectRepository().listPage(owner.id, 1, Math.max(safeLimit * 2, safeLimit));
+    const songs: RecentSongItem[] = [];
+    for (const project of recentProjects.items) {
+      if (songs.length >= safeLimit) break;
+      const versions = await this.listVersions(owner, project.id);
+      const represent = versions.find((v) => v.isMain) ?? versions[0];
+      if (!represent) continue;
+      songs.push({
+        versionId: represent.id,
+        projectId: project.id,
+        title: represent.title,
+        projectName: project.title,
+        updatedAt: represent.createdAt,
+      });
+    }
+    return songs;
+  }
+
+  async getCurrentAudio(owner: AuthUser, projectId: string) {    const versions = await this.listVersions(owner, projectId);
     const current = versions.find((version) => version.isMain) ?? versions[0];
     return current?.audioUrl ? { url: current.audioUrl, executionKind: current.executionKind } : null;
   }
@@ -294,5 +318,56 @@ export class GenerationService {
       await tx.update(projects).set({ mainVersionId: version.id, updatedAt: new Date() }).where(eq(projects.id, projectId));
       return { id: version.id, versionNo, title: `${String(source.metadata?.title || project.title).replace(/ · V\d+$/, "")} · V${versionNo}`, variation: String(source.snapshot.variation || "Demo"), isMain: true, createdAt: version.createdAt.toISOString(), executionKind: source.executionKind ?? "simulated", hasAudio: Boolean(source.metadata?.hasAudio), audioUrl: typeof source.metadata?.audioUrl === "string" ? source.metadata.audioUrl : null, restoredFromVersionId: sourceVersionId };
     });
+  }
+
+  /**
+   * 删除指定版本（事务）：
+   * - demo_assets 随 demo_versions cascade 删除；
+   * - 被删版本的子节点 parentId 上移到被删版本的 parentId，保持版本树连通；
+   * - 若删的是主版本，自动把剩余版本中 versionNo 最大者设为新主版本，
+   *   并回写 projects.mainVersionId。
+   */
+  async delete(owner: AuthUser, projectId: string, versionId: string): Promise<{ ok: true }> {
+    const project = await getProjectRepository().findOwned(projectId, owner.id);
+    if (!project) throw new DomainError("NOT_FOUND", 404, "项目不存在或无权访问");
+
+    if (!process.env.DATABASE_URL) {
+      const entry = mockVersionIndex.get(versionId);
+      if (!entry || entry.projectId !== projectId || entry.ownerId !== owner.id) throw new DomainError("NOT_FOUND", 404, "版本不存在");
+      const removedParentId = typeof entry.snapshot.parentId === "string" ? entry.snapshot.parentId : null;
+      // 子节点 parent 上移（写入 snapshot.parentId），保持树连通。
+      for (const [, item] of mockVersionIndex) {
+        if (item.projectId === projectId && item.snapshot.parentId === versionId) {
+          item.snapshot = { ...item.snapshot, parentId: removedParentId };
+        }
+      }
+      mockVersionIndex.delete(versionId);
+      // 删主版本时自动迁移主：选剩余 versionNo 最大者。
+      if (entry.isMain) {
+        const remaining = [...mockVersionIndex.values()].filter((item) => item.projectId === projectId).sort((a, b) => b.versionNo - a.versionNo)[0] ?? null;
+        if (remaining) {
+          remaining.isMain = true;
+        }
+      }
+      return { ok: true };
+    }
+
+    const db = getDatabase();
+    await db.transaction(async (tx) => {
+      const [version] = await tx.select({ id: demoVersions.id, parentId: demoVersions.parentId, isMain: demoVersions.isMain }).from(demoVersions).where(and(eq(demoVersions.id, versionId), eq(demoVersions.projectId, projectId))).limit(1);
+      if (!version) throw new DomainError("NOT_FOUND", 404, "版本不存在");
+      const removedParentId = version.parentId ?? null;
+      // 子节点 parent 上移：parentId === 被删版本 → 改为被删版本的 parentId。
+      await tx.update(demoVersions).set({ parentId: removedParentId }).where(and(eq(demoVersions.projectId, projectId), eq(demoVersions.parentId, versionId)));
+      await tx.delete(demoVersions).where(eq(demoVersions.id, versionId));
+      if (version.isMain) {
+        const [newMain] = await tx.select({ id: demoVersions.id }).from(demoVersions).where(eq(demoVersions.projectId, projectId)).orderBy(desc(demoVersions.versionNo)).limit(1);
+        if (newMain) {
+          await tx.update(demoVersions).set({ isMain: true }).where(eq(demoVersions.id, newMain.id));
+          await tx.update(projects).set({ mainVersionId: newMain.id, updatedAt: new Date() }).where(eq(projects.id, projectId));
+        }
+      }
+    });
+    return { ok: true };
   }
 }

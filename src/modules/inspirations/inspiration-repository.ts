@@ -3,14 +3,17 @@ import { and, count, desc, eq, ilike, inArray, isNull, isNotNull, ne, or, sql } 
 import { getDatabase } from "@/infrastructure/db/client";
 import { inspirationAssets, inspirationRecordVersions, inspirationRecords, profiles, projects } from "@/infrastructure/db/schema";
 import type { AuthUser } from "@/modules/auth/types";
-import { ProjectService } from "@/modules/projects/project-service";
 import { getProjectRepository } from "@/modules/projects/project-repository";
+// NOTE: 历史上此处曾 import ProjectService 用于 mock attach 的 new_project 分支，造成
+// inspiration-repository → project-service → inspiration-service → inspiration-repository 循环。
+// 改为直接通过 getProjectRepository().create 创建项目，彻底消除反向依赖。
 import type { InspirationAttachment } from "./attachment-schema";
 import type { InspirationSnapshot, InspirationSnapshotReason } from "./inspiration-schema";
 import type {
   AutosaveResult,
   InspirationDetail,
   InspirationListFilters,
+  InspirationListItem,
   InspirationListPage,
   InspirationRecord,
   InspirationRecordVersion,
@@ -35,9 +38,30 @@ export interface InspirationRepository {
   softDelete(recordId: string, ownerId: string): Promise<boolean>;
   listVersions(recordId: string, ownerId: string): Promise<InspirationRecordVersion[]>;
   restoreVersion(recordId: string, ownerId: string, versionId: string): Promise<InspirationRecord | null>;
+  /** 项目详情页：按项目归属列出关联灵感（不加载完整 snapshot）。 */
+  listByProject(ownerId: string, projectId: string): Promise<InspirationListItem[]>;
 }
 
 type RecordRow = typeof inspirationRecords.$inferSelect;
+
+/** 把 YYYY-MM-DD 转成 Date 边界（start=00:00:00，end=23:59:59.999）；非法返回 null。 */
+function parseDateBoundary(value: string, edge: "start" | "end"): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const [, y, m, d] = match;
+  const year = Number(y);
+  const month = Number(m) - 1;
+  const day = Number(d);
+  const date = new Date(Date.UTC(year, month, day, edge === "start" ? 0 : 23, edge === "start" ? 0 : 59, edge === "start" ? 0 : 59, edge === "start" ? 0 : 999));
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+/** 把 YYYY-MM-DD 转成 ISO 字符串边界（与 mock 记录的 createdAt ISO 字符串可比较）。 */
+function parseDateBoundaryIso(value: string, edge: "start" | "end"): string | null {
+  const d = parseDateBoundary(value, edge);
+  return d ? d.toISOString() : null;
+}
 
 function mapRecord(row: RecordRow): InspirationRecord {
   return {
@@ -216,6 +240,15 @@ export class DrizzleInspirationRepository implements InspirationRepository {
     if (filters.attached === "attached") conds.push(isNotNull(inspirationRecords.projectId));
     if (filters.attached === "unattached") conds.push(isNull(inspirationRecords.projectId));
     if (filters.tags?.length) conds.push(sql`${inspirationRecords.tags} @> ${JSON.stringify(filters.tags)}::jsonb`);
+    if (filters.moods?.length) conds.push(sql`${inspirationRecords.tags} @> ${JSON.stringify(filters.moods)}::jsonb`);
+    if (filters.createdFrom) {
+      const from = parseDateBoundary(filters.createdFrom, "start");
+      if (from) conds.push(sql`${inspirationRecords.createdAt} >= ${from}`);
+    }
+    if (filters.createdTo) {
+      const to = parseDateBoundary(filters.createdTo, "end");
+      if (to) conds.push(sql`${inspirationRecords.createdAt} <= ${to}`);
+    }
     const where = and(...conds);
     const orderCol = filters.sort === "created" ? inspirationRecords.createdAt : inspirationRecords.updatedAt;
     const db = getDatabase();
@@ -291,6 +324,41 @@ export class DrizzleInspirationRepository implements InspirationRepository {
       .where(eq(inspirationRecordVersions.recordId, recordId))
       .orderBy(desc(inspirationRecordVersions.versionNo));
     return rows.map(mapVersionRow);
+  }
+
+  /** 项目详情页：按项目归属列出关联灵感（JOIN 项目名，按更新时间倒序）。 */
+  async listByProject(ownerId: string, projectId: string): Promise<InspirationListItem[]> {
+    const rows = await getDatabase().select({
+      id: inspirationRecords.id,
+      title: inspirationRecords.title,
+      primaryKind: inspirationRecords.primaryKind,
+      summary: inspirationRecords.summary,
+      tags: inspirationRecords.tags,
+      projectId: inspirationRecords.projectId,
+      projectName: projects.title,
+      versionCount: inspirationRecords.versionCount,
+      createdAt: inspirationRecords.createdAt,
+      updatedAt: inspirationRecords.updatedAt,
+    }).from(inspirationRecords)
+      .leftJoin(projects, eq(projects.id, inspirationRecords.projectId))
+      .where(and(
+        eq(inspirationRecords.ownerId, ownerId),
+        eq(inspirationRecords.projectId, projectId),
+        isNull(inspirationRecords.deletedAt),
+      ))
+      .orderBy(desc(inspirationRecords.updatedAt));
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      primaryKind: row.primaryKind,
+      summary: row.summary,
+      tags: row.tags,
+      projectId: row.projectId,
+      projectName: row.projectName,
+      versionCount: row.versionCount,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    }));
   }
 
   /** 恢复历史快照：将记录当前内容指回目标快照（内容已有版本行，去重模型下不新增行，不删历史）。 */
@@ -405,10 +473,10 @@ export class MockInspirationRepository implements InspirationRepository {
       projectId = project.id;
     } else {
       const seed = projectSeedFromRecord(record);
-      const project = await new ProjectService().create(owner, {
+      const project = await getProjectRepository().create(owner, {
         title: destination.title,
-        description: seed.description,
-        lyrics: seed.lyrics,
+        ...(seed.description !== undefined ? { description: seed.description } : {}),
+        ...(seed.lyrics !== undefined ? { lyrics: seed.lyrics } : {}),
       });
       projectId = project.id;
     }
@@ -429,6 +497,15 @@ export class MockInspirationRepository implements InspirationRepository {
     if (filters.attached === "attached") items = items.filter((r) => Boolean(r.projectId));
     if (filters.attached === "unattached") items = items.filter((r) => !r.projectId);
     if (filters.tags?.length) items = items.filter((r) => filters.tags!.every((t) => r.tags.includes(t)));
+    if (filters.moods?.length) items = items.filter((r) => filters.moods!.every((m) => r.tags.includes(m)));
+    if (filters.createdFrom) {
+      const from = parseDateBoundaryIso(filters.createdFrom, "start");
+      if (from) items = items.filter((r) => r.createdAt >= from);
+    }
+    if (filters.createdTo) {
+      const to = parseDateBoundaryIso(filters.createdTo, "end");
+      if (to) items = items.filter((r) => r.createdAt <= to);
+    }
     items.sort((a, b) => (filters.sort === "created" ? b.createdAt : b.updatedAt).localeCompare(filters.sort === "created" ? a.createdAt : a.updatedAt));
     const total = items.length;
     const paged = items.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
@@ -472,6 +549,13 @@ export class MockInspirationRepository implements InspirationRepository {
     const record = this.records.get(recordId);
     if (!record || record.ownerId !== ownerId) return [];
     return (this.versions.get(recordId) ?? []).map((v) => structuredClone(v)).sort((a, b) => b.versionNo - a.versionNo);
+  }
+
+  async listByProject(ownerId: string, projectId: string): Promise<InspirationListItem[]> {
+    return [...this.records.values()]
+      .filter((r) => r.ownerId === ownerId && r.projectId === projectId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map((r) => ({ id: r.id, title: r.title, primaryKind: r.primaryKind, summary: r.summary, tags: [...r.tags], projectId: r.projectId, projectName: null, versionCount: r.versionCount, createdAt: r.createdAt, updatedAt: r.updatedAt }));
   }
 
   async restoreVersion(recordId: string, ownerId: string, versionId: string): Promise<InspirationRecord | null> {

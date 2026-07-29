@@ -9,6 +9,14 @@ import { DomainError } from "@/shared/errors/domain-error";
 import { createProjectSchema, updateProjectDraftSchema } from "@/shared/validation/project";
 import { getProjectRepository, type ProjectRepository } from "./project-repository";
 
+/**
+ * NOTE: 历史上此处曾 import InspirationService / GenerationService 并在 getProjectDetail
+ * 中聚合灵感与版本。该聚合造成 project-service ↔ inspiration-repository 循环 import
+ * （project-service → inspiration-service → inspiration-repository → project-service），
+ * 在 Next.js (Turbopack/webpack) 下导致模块绑定未就绪、运行时 ReferenceError，进而被
+ * 页面 try/catch 吞成 404。聚合已上移到 works/[projectId] 页面层（见该 page.tsx），
+ * 因此本服务不再依赖灵感/生成模块。
+ */
 export class ProjectService {
   constructor(private readonly repository: ProjectRepository = getProjectRepository()) {}
 
@@ -32,4 +40,20 @@ export class ProjectService {
     if (!project) throw new DomainError("NOT_FOUND", 404, "项目不存在或无权访问");
     return project;
   }
+
+  /** 创作库：项目分页列表 + 灵感数/歌曲数（/api/works）。支持关键词与排序。 */
+  async listWithCounts(
+    ownerId: string,
+    page = 1,
+    pageSize = 12,
+    query = "",
+    sort: "updated" | "created" = "updated",
+  ) {
+    const safePage = Number.isFinite(page) ? Math.max(1, Math.floor(page)) : 1;
+    const safePageSize = Number.isFinite(pageSize) ? Math.min(48, Math.max(1, Math.floor(pageSize))) : 12;
+    return this.repository.listPageWithCounts(ownerId, safePage, safePageSize, query, sort);
+  }
+
+  /** 项目详情聚合（/works/[projectId]）：项目 + 关联灵感 + 版本（歌曲）列表。
+   *  已上移到 works/[projectId] 页面层聚合，见该 page.tsx。 */
 }

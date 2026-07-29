@@ -13,3 +13,12 @@ test("creates and retrieves a text-only project in mock mode", async () => {
   expect((await service.get(owner.id, created.id)).title).toBe("雨后列车");
   expect((await service.list(owner.id))).toHaveLength(1);
 });
+
+test("allows creating an empty title-only project for the workspace entry flow", async () => {
+  const service = new ProjectService(new MockProjectRepository());
+  const created = await service.create(owner, { title: "不眠之夜" });
+
+  expect(created.combination).toBe("text");
+  expect(created.lyrics).toBeNull();
+  expect(created.assets).toEqual([]);
+});

@@ -1,18 +1,26 @@
-import { and, count, desc, eq, isNull } from "drizzle-orm";
+import { and, count, desc, eq, ilike, inArray, isNull, or } from "drizzle-orm";
 
 import { getDatabase } from "@/infrastructure/db/client";
-import { inspirationAssets, profiles, projects } from "@/infrastructure/db/schema";
+import { demoVersions, inspirationAssets, inspirationRecords, profiles, projects } from "@/infrastructure/db/schema";
 import { getArtistCatalog } from "@/modules/artists/artist-catalog";
 import type { ArtistProfile } from "@/modules/artists/artist-types";
 import type { AuthUser } from "@/modules/auth/types";
-import { detectCombination } from "@/shared/utils/combination";
+import { resolveCombination } from "@/shared/utils/combination";
 import type { CreateProjectInput, UpdateProjectDraftInput } from "@/shared/validation/project";
-import type { ProjectDetail, ProjectListPage, ProjectSummary } from "./project-types";
+import type { ProjectDetail, ProjectListItem, ProjectListPage, ProjectSummary } from "./project-types";
 
 export interface ProjectRepository {
   create(owner: AuthUser, input: CreateProjectInput): Promise<ProjectDetail>;
   list(ownerId: string): Promise<ProjectSummary[]>;
   listPage(ownerId: string, page: number, pageSize: number): Promise<ProjectListPage>;
+  /** 创作库项目列表：每项携带灵感数/歌曲数/封面。支持关键词与排序。 */
+  listPageWithCounts(
+    ownerId: string,
+    page: number,
+    pageSize: number,
+    query?: string,
+    sort?: "updated" | "created",
+  ): Promise<ProjectListPage<ProjectListItem>>;
   findOwned(projectId: string, ownerId: string): Promise<ProjectDetail | null>;
   updateDraft(projectId: string, ownerId: string, input: UpdateProjectDraftInput): Promise<ProjectDetail | null>;
 }
@@ -58,7 +66,7 @@ export class DrizzleProjectRepository implements ProjectRepository {
       ].filter((asset): asset is NonNullable<typeof asset> => Boolean(asset));
       if (assetValues.length) await tx.insert(inspirationAssets).values(assetValues);
       const assets = assetValues.map((asset, index) => ({ id: `pending-${index}`, kind: asset.kind, content: asset.content ?? null, included: true, status: "ready" as const }));
-      const combination = detectCombination({ hasText: Boolean(input.description || input.lyrics), hasMelody: Boolean(input.melodyAssetId), hasVisual: Boolean(input.visualAssetId) });
+      const combination = resolveCombination({ hasText: Boolean(input.description || input.lyrics), hasMelody: Boolean(input.melodyAssetId), hasVisual: Boolean(input.visualAssetId) });
       return { ...summaryFromRow(project, combination), lyrics: input.lyrics || null, creativeContext, assets };
     });
   }
@@ -78,12 +86,52 @@ export class DrizzleProjectRepository implements ProjectRepository {
     return { items: rows.map((row) => summaryFromRow(row)), page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
   }
 
+  /** 创作库：分页项目 + 批量聚合灵感数/歌曲数（两条 groupBy 查询，避免 N+1）。支持关键词与排序。 */
+  async listPageWithCounts(
+    ownerId: string,
+    page: number,
+    pageSize: number,
+    query = "",
+    sort: "updated" | "created" = "updated",
+  ): Promise<ProjectListPage<ProjectListItem>> {
+    const db = getDatabase();
+    const trimmed = query.trim();
+    const where = and(
+      eq(projects.ownerId, ownerId),
+      isNull(projects.deletedAt),
+      ...(trimmed
+        ? [or(ilike(projects.title, `%${trimmed}%`), ilike(projects.description, `%${trimmed}%`))!]
+        : []),
+    );
+    const orderColumn = sort === "created" ? projects.createdAt : projects.updatedAt;
+    const [rows, totalRows] = await Promise.all([
+      db.select().from(projects).where(where).orderBy(desc(orderColumn)).limit(pageSize).offset((page - 1) * pageSize),
+      db.select({ value: count() }).from(projects).where(where),
+    ]);
+    const total = totalRows[0]?.value ?? 0;
+    const ids = rows.map((row) => row.id);
+    let inspirationCounts = new Map<string, number>();
+    let versionCounts = new Map<string, number>();
+    if (ids.length) {
+      const [inspirationRows, versionRows] = await Promise.all([
+        db.select({ id: inspirationRecords.projectId, value: count() }).from(inspirationRecords).where(and(inArray(inspirationRecords.projectId, ids), eq(inspirationRecords.ownerId, ownerId), isNull(inspirationRecords.deletedAt))).groupBy(inspirationRecords.projectId),
+        db.select({ id: demoVersions.projectId, value: count() }).from(demoVersions).where(inArray(demoVersions.projectId, ids)).groupBy(demoVersions.projectId),
+      ]);
+      inspirationCounts = new Map(inspirationRows.map((row) => [row.id!, Number(row.value)]));
+      versionCounts = new Map(versionRows.map((row) => [row.id!, Number(row.value)]));
+    }
+    return {
+      items: rows.map((row) => ({ ...summaryFromRow(row), inspirationCount: inspirationCounts.get(row.id) ?? 0, versionCount: versionCounts.get(row.id) ?? 0, coverUrl: null })),
+      page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  }
+
   async findOwned(projectId: string, ownerId: string): Promise<ProjectDetail | null> {
     const db = getDatabase();
     const [project] = await db.select().from(projects).where(and(eq(projects.id, projectId), eq(projects.ownerId, ownerId), isNull(projects.deletedAt))).limit(1);
     if (!project) return null;
     const assets = await db.select({ id: inspirationAssets.id, kind: inspirationAssets.kind, content: inspirationAssets.content, included: inspirationAssets.included, status: inspirationAssets.status, originalName: inspirationAssets.originalName, mimeType: inspirationAssets.mimeType, sizeBytes: inspirationAssets.sizeBytes, objectKey: inspirationAssets.objectKey }).from(inspirationAssets).where(eq(inspirationAssets.projectId, projectId));
-    const combination = detectCombination({ hasText: Boolean(project.currentLyrics) || assets.some((asset) => asset.kind === "text" || asset.kind === "lyrics"), hasMelody: assets.some((asset) => asset.kind === "audio"), hasVisual: assets.some((asset) => asset.kind === "image" || asset.kind === "video") });
+    const combination = resolveCombination({ hasText: Boolean(project.currentLyrics) || assets.some((asset) => asset.kind === "text" || asset.kind === "lyrics"), hasMelody: assets.some((asset) => asset.kind === "audio"), hasVisual: assets.some((asset) => asset.kind === "image" || asset.kind === "video") });
     return { ...summaryFromRow(project, combination), lyrics: project.currentLyrics ?? assets.find((asset) => asset.kind === "lyrics")?.content ?? null, creativeContext: project.creativeContext ?? {}, assets };
   }
 
@@ -110,6 +158,11 @@ const songDraftProjectStore = globalThis as typeof globalThis & {
   __songDraftProjects?: Map<string, ProjectDetail>;
 };
 const memoryProjects = songDraftProjectStore.__songDraftProjects ??= new Map<string, ProjectDetail>();
+/** 跨模块读取灵感/版本 mock store，用于 Mock 模式下聚合计数。 */
+const projectCountStore = globalThis as typeof globalThis & {
+  __songDraftInspirationRecords?: Map<string, { ownerId: string; projectId: string | null }>;
+  __songDraftVersionIndex?: Map<string, { projectId: string }>;
+};
 
 export class MockProjectRepository implements ProjectRepository {
   async create(owner: AuthUser, input: CreateProjectInput): Promise<ProjectDetail> {
@@ -120,7 +173,7 @@ export class MockProjectRepository implements ProjectRepository {
     const assets: ProjectDetail["assets"] = [];
     if (input.description) assets.push({ id: crypto.randomUUID(), kind: "text", content: input.description, included: true, status: "ready" });
     if (input.lyrics) assets.push({ id: crypto.randomUUID(), kind: "lyrics", content: input.lyrics, included: true, status: "ready" });
-    const project: ProjectDetail = { id, ownerId: owner.id, title: input.title, description: input.description || null, lyrics: input.lyrics || null, status: "draft", combination: detectCombination({ hasText: assets.length > 0, hasMelody: Boolean(input.melodyAssetId), hasVisual: Boolean(input.visualAssetId) }), artist, eventId: input.eventId ?? null, creativeContext, createdAt: now, updatedAt: now, assets };
+    const project: ProjectDetail = { id, ownerId: owner.id, title: input.title, description: input.description || null, lyrics: input.lyrics || null, status: "draft", combination: resolveCombination({ hasText: assets.length > 0, hasMelody: Boolean(input.melodyAssetId), hasVisual: Boolean(input.visualAssetId) }), artist, eventId: input.eventId ?? null, creativeContext, createdAt: now, updatedAt: now, assets };
     memoryProjects.set(id, project);
     return structuredClone(project);
   }
@@ -130,6 +183,38 @@ export class MockProjectRepository implements ProjectRepository {
   async listPage(ownerId: string, page: number, pageSize: number): Promise<ProjectListPage> {
     const all = [...memoryProjects.values()].filter((project) => project.ownerId === ownerId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(({ lyrics: _lyrics, assets: _assets, creativeContext: _creativeContext, ...summary }) => summary);
     const items = all.slice((page - 1) * pageSize, page * pageSize);
+    return { items, page, pageSize, total: all.length, totalPages: Math.max(1, Math.ceil(all.length / pageSize)) };
+  }
+
+  async listPageWithCounts(
+    ownerId: string,
+    page: number,
+    pageSize: number,
+    query = "",
+    sort: "updated" | "created" = "updated",
+  ): Promise<ProjectListPage<ProjectListItem>> {
+    const inspirationStore = projectCountStore.__songDraftInspirationRecords;
+    const versionStore = projectCountStore.__songDraftVersionIndex;
+    const trimmed = query.trim().toLowerCase();
+    const all = [...memoryProjects.values()]
+      .filter((project) => project.ownerId === ownerId)
+      .filter((project) =>
+        trimmed
+          ? `${project.title} ${project.description ?? ""}`.toLowerCase().includes(trimmed)
+          : true,
+      )
+      .sort((a, b) =>
+        sort === "created"
+          ? b.createdAt.localeCompare(a.createdAt)
+          : b.updatedAt.localeCompare(a.updatedAt),
+      );
+    const paged = all.slice((page - 1) * pageSize, page * pageSize);
+    const items = paged.map(({ lyrics: _lyrics, assets: _assets, creativeContext: _creativeContext, ...summary }) => ({
+      ...summary,
+      inspirationCount: inspirationStore ? [...inspirationStore.values()].filter((r) => r.ownerId === ownerId && r.projectId === summary.id).length : 0,
+      versionCount: versionStore ? [...versionStore.values()].filter((v) => v.projectId === summary.id).length : 0,
+      coverUrl: null,
+    }));
     return { items, page, pageSize, total: all.length, totalPages: Math.max(1, Math.ceil(all.length / pageSize)) };
   }
 

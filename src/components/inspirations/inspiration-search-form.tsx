@@ -37,7 +37,7 @@ export function InspirationSearchForm({
     onApply({ ...draft, page: 1 });
   }
   function reset() {
-    const cleared: LibFilters = { query: "", kinds: [], attached: "all", tags: [], sort: "updated", page: 1, pageSize: value.pageSize };
+    const cleared: LibFilters = { query: "", kinds: [], attached: "all", tags: [], moods: [], createdFrom: "", createdTo: "", sort: "updated", page: 1, pageSize: value.pageSize };
     setDraft(cleared);
     onApply(cleared);
   }
@@ -46,7 +46,7 @@ export function InspirationSearchForm({
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+    <div className="rounded-lg border border-border bg-card p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-muted-foreground">关键词</span>
@@ -110,6 +110,40 @@ export function InspirationSearchForm({
           );
         })}
       </div>
+
+      {/* 情绪关键词 + 创建日期范围（次要筛选，默认折叠在「更多筛选」里）。 */}
+      <details className="mt-3">
+        <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground">更多筛选</summary>
+        <div className="mt-2 grid gap-3 sm:grid-cols-3">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">情绪（逗号分隔）</span>
+            <input
+              className={inputClass}
+              value={draft.moods.join(",")}
+              onChange={(e) => setDraft((d) => ({ ...d, moods: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) }))}
+              placeholder="例如：治愈,明亮"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">创建起（含）</span>
+            <input
+              type="date"
+              className={inputClass}
+              value={draft.createdFrom}
+              onChange={(e) => setDraft((d) => ({ ...d, createdFrom: e.target.value }))}
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">创建止（含）</span>
+            <input
+              type="date"
+              className={inputClass}
+              value={draft.createdTo}
+              onChange={(e) => setDraft((d) => ({ ...d, createdTo: e.target.value }))}
+            />
+          </label>
+        </div>
+      </details>
     </div>
   );
 }

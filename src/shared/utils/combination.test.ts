@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { detectCombination } from "./combination";
+import { detectCombination, resolveCombination } from "./combination";
 
 describe("detectCombination", () => {
   test.each([
@@ -18,5 +18,15 @@ describe("detectCombination", () => {
   test("rejects empty inspiration", () => {
     expect(() => detectCombination({ hasText: false, hasMelody: false, hasVisual: false }))
       .toThrowError("input_required");
+  });
+});
+
+describe("resolveCombination", () => {
+  test("defaults empty project to text without throwing", () => {
+    expect(resolveCombination({ hasText: false, hasMelody: false, hasVisual: false })).toBe("text");
+  });
+
+  test("delegates non-empty presence to detectCombination", () => {
+    expect(resolveCombination({ hasText: true, hasMelody: true, hasVisual: false })).toBe("melody+text");
   });
 });

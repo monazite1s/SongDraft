@@ -9,6 +9,7 @@ import { UploadService } from "./upload-service";
 class MemoryUploadRepository implements UploadRepository {
   assets = new Map<string, UploadAsset>();
   async isOwnedProject(_projectId: string, ownerId: string) { return ownerId === "00000000-0000-4000-8000-000000000001"; }
+  async isOwnedRecord(_recordId: string, ownerId: string) { return ownerId === "00000000-0000-4000-8000-000000000001"; }
   async createPending(asset: UploadAsset) { this.assets.set(asset.id, asset); }
   async findOwned(uploadId: string, ownerId: string) { const asset = this.assets.get(uploadId); return asset?.ownerId === ownerId ? asset : null; }
   async markReady(uploadId: string) { const asset = this.assets.get(uploadId); if (asset) asset.status = "ready"; }

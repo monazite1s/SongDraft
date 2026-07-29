@@ -1,3 +1,4 @@
+/** 项目版本列表（制作台历史记录）。 */
 import { z } from "zod";
 
 import { getCurrentUser } from "@/modules/auth/queries";

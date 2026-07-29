@@ -1,72 +1,61 @@
-# SongDraft 交付状态审计
+# SongDraft V4.0 交付审计
 
-> 审计日期：2026-07-29。此文件以当前代码与自动化验证为依据；“透明 Mock”不等同于外部 AI 服务已调用。
+> 审计日期：2026-07-29。透明 Mock 不等于已调用外部 AI。
 
-## 1. 用户要求与证据
+## 需求证据
 
-| 交付项 | 状态 | 当前证据 |
+| 交付项 | 状态 | 证据 |
 |---|---|---|
-| 完整前后端架构 | 已完成 | Next.js App Router、模块化 `modules/`、Drizzle Schema/Migration、认证/存储/生成/分享服务层 |
-| 产品、需求与技术文档 | 已完成 | `SPEC.md`、`requirements.md`、`technical-design.md`、`future-work.md` |
-| 响应式 Web/H5 交互 | 已完成主路径 | Desktop Sidebar、移动底部导航、首页、工作台、作品库、设置 Profile、公开分享 H5 |
-| 多模态灵感输入 | 已完成 | 文字/歌词、浏览器录音、音频、图片、视频 Upload Intent 与预览 |
-| Demo 生成 | 已完成透明 Mock | Capability Router、Plan、Job、候选、Version；无配置时明确无真实音频 |
-| 私密分享协作 | 已完成 | Hash Token、二维码、有效期、撤回、公开 H5、评论、创作者回流 |
-| 后续 API/部署教程 | 已完成 | `future-work.md` 的 COS/DeepSeek/Music/Supabase/Vercel 章节 |
+| 对话式首页 | 已实现 | 艺人选择、卡片轮播、事件 Tag、SSE、实时歌词和创作台跳转 |
+| 一级生成入口 | 已实现 | `/create` 与首页、作品、知识库同级 |
+| 新创作台 | 已实现 | 艺人 Hero、歌词/哼唱、固定生成按钮、右侧 SongDetail |
+| 线性版本 | 已实现 | 单次单版本；Restore 复制快照为 N+1 |
+| 作品/详情 | 已实现 | Project Repository 分页、卡片、`/works/[id]` |
+| 私密分享 | 已实现 | Hash Token、二维码、H5 歌词、普通/时间点评论 |
+| 艺人主题 | 已实现 | CSS 变量、约 280ms 过渡、默认品牌兜底、reduced-motion |
+| 只读知识库 | 已实现 | `ArtistCatalog` 共享虚构资料 |
+| 数据与 API | 已实现 | 0001 迁移、项目草稿、对话消息、SSE、版本恢复 |
+| 外部接口清单/部署 | 已完成文档 | `technical-design.md`、`future-work.md` |
 
-## 2. 核心闭环状态
+## 安全边界
 
-```text
-文字 / 录音 / 图片视频
-        ↓
-项目 + 私有素材上传 + 透明分析
-        ↓
-可编辑 Creative Brief + Capability Router + 确认 Plan
-        ↓
-Mock Job → 两个候选 → Version / 主版本
-        ↓
-Token / QR 分享 → 公开 H5 → 时间点评论
-        ↓
-工作台反馈回流、已读、软删除、导出创作包
-```
+- API 校验 Zod 输入、认证和项目所有权。
+- 上传校验 MIME、扩展名、大小和 COS 对象键归属。
+- Supabase Session 使用服务端 Cookie，不在 localStorage 保存 Token。
+- 分享数据库只保存 Token SHA-256 Hash。
+- DeepSeek、Mureka、COS 和数据库凭据均来自服务端环境变量。
+- 页面不渲染用户 HTML；错误响应不暴露 Stack、SQL 或 Secret。
+- 生产环境不会自动启用 Mock Auth。
 
-## 3. 透明降级边界
+## 自动化门槛
 
-以下功能已具备接口、数据模型和 UI，但因未提供云端密钥而以透明 Mock 运行：
-
-- Supabase：非生产且未配置 Supabase/未显式选择认证模式时自动提供开发演示用户，也可显式设置 `AUTH_MODE=mock`；生产环境始终关闭 Mock，真实邮箱密码登录代码已存在。
-- PostgreSQL：未配置 `DATABASE_URL` 时项目、版本、分享、评论保存在进程内存，重启后丢失。
-- COS：`STORAGE_DRIVER=mock` 时写入系统临时目录；生产可切至腾讯云 COS 预签名直传。
-- Analyzer：返回明确标注的 simulated 结果，不声称真实 BPM、音域或视觉识别。
-- 音乐 Provider：生成计划、Job、版本完整运行。未配置 Provider 时，页面可播放明确标注的浏览器本地合成样例；它不写入存储，也不声称调用 Mureka、MiniMax 或其他服务。
-
-## 4. 自动化验收证据
-
-截至本审计，以下命令已在当前 workspace 成功执行：
+必须全部通过后才视为可交付：
 
 ```bash
-pnpm test       # 33/33
+pnpm test
 pnpm lint
-pnpm build
 pnpm typecheck
+pnpm build
+DATABASE_URL=postgresql://songdraft:songdraft@127.0.0.1:5432/songdraft pnpm drizzle:check
+pnpm test:e2e
 ```
 
-运行态 UI 验收已覆盖 `/`、`/create/new`、`/works`、`/settings` 与 `/works/[id]`；新建工作台首次保存创建项目，第二次保存创建新版本，浏览器实测版本标识由 `v1` 更新为 `v3`。
+测试覆盖首页、歌词助手、艺人事件引用、项目分页、单版本生成、线性恢复、分享评论、上传和 Mock 播放。
 
-单元测试覆盖：C1–C7 组合、项目创建、上传归属/校验/完成、私有读取和软删除、Mock 分析、Capability Router、生成版本主版本、分享/有效期/撤回、评论回流/已读/软删除、作品筛选、导出文件名安全。
+## 上线前外部条件
 
-## 5. 上线前强制项
+以下依赖真实凭据、授权或设备，不能由 Mock 验证替代：
 
-这些不是代码缺失的模糊描述，而是需要真实外部授权或真实设备验证的上线门槛：
+1. Supabase、PostgreSQL、COS、DeepSeek 和 Mureka 生产配置。
+2. Preview 数据库应用 0000/0001 迁移并验证重启持久化。
+3. COS 私有 Bucket、CORS、短期签名和越权测试。
+4. Mureka 回调验签、音频转存和音乐版权确认。
+5. 微信内浏览器/真机麦克风、播放、二维码和评论测试。
+6. Node.js 22 Vercel 构建。
 
-1. 提供 Supabase、PostgreSQL、腾讯云 COS、DeepSeek 与音乐 Provider 的生产凭据；配置步骤见 `future-work.md`。
-2. 为 Mock 或真实 Provider 准备至少六条明确授权的可播放 Demo 音频，完成移动端播放测试。
-3. 真机验证麦克风权限、录音、微信打开二维码分享页、COS CORS 和断网重试。
-4. 在独立 Preview 环境运行迁移，验证重启后的项目/版本/分享/评论持久化。
-5. 使用 Node.js 22 在 Vercel 进行生产构建；当前开发 Node 20 会触发 Supabase 弃用提示。
+## 禁止项
 
-## 6. 不应做的操作
-
-- 不得将 `.env.local`、COS Secret、数据库 URL、Provider Key、JWT、Share Token 或未授权音频提交到 Git。
-- 不得删除或改写已发布的 Drizzle Migration；新 Schema 变更必须创建新的迁移。
-- 不得把 `simulated` 结果改成“已由某模型生成”的文案。
+- 不提交 Secret、数据库 URL、Share Token、`.env.local` 或未授权媒体。
+- 不编辑已发布迁移；后续变化必须新增迁移。
+- 不把 simulated 文案替换为真实模型声明。
+- 不重新启用旧图片/视频、Provider、Brief/Plan 或版本树 UI。

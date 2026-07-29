@@ -13,7 +13,7 @@ export function getSafeExtension(filename: string) {
 export function createObjectKey(input: {
   environment: string;
   userId: string;
-  projectId: string;
+  scope: { type: "project" | "record"; id: string };
   kind: "audio" | "image" | "video";
   filename: string;
   objectId?: string;
@@ -21,7 +21,7 @@ export function createObjectKey(input: {
   const extension = getSafeExtension(input.filename);
   const environment = input.environment.replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "dev";
   const objectId = input.objectId ?? crypto.randomUUID();
-  return `${environment}/users/${input.userId}/projects/${input.projectId}/${input.kind}/${objectId}.${extension}`;
+  return `${environment}/users/${input.userId}/${input.scope.type}s/${input.scope.id}/${input.kind}/${objectId}.${extension}`;
 }
 
 export function isOwnedObjectKey(objectKey: string, userId: string) {

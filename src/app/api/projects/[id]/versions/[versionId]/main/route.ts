@@ -1,3 +1,4 @@
+/** 将指定版本设为主版本（制作台「应用」数据侧）。 */
 import { z } from "zod";
 
 import { getCurrentUser } from "@/modules/auth/queries";

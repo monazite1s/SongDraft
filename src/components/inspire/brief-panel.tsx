@@ -1,3 +1,6 @@
+/**
+ * 成果区：展示 Brief 与 Demo 候选；真实结果用 audioUrl 原生播放，Mock 用波形。
+ */
 'use client'
 
 import { useState } from 'react'
@@ -292,7 +295,7 @@ function CandidateCard({
       <p className="mt-2.5 text-xs text-muted-foreground">{c.descriptor}</p>
 
       <div className="mt-3">
-        <AudioPlayer durationLabel={c.duration} seed={c.id.charCodeAt(1)} bars={40} />
+        {c.audioUrl ? <audio controls preload="metadata" src={c.audioUrl} className="h-9 w-full" aria-label={`${c.title} 播放器`} /> : <AudioPlayer durationLabel={c.duration} seed={c.id.charCodeAt(1)} bars={40} />}
       </div>
 
       <div className="mt-3 flex gap-2">
@@ -506,7 +509,7 @@ function CompareColumn({
         ))}
       </dl>
       <div className="mt-2">
-        <AudioPlayer durationLabel={c.duration} seed={c.id.charCodeAt(1)} bars={20} />
+        {c.audioUrl ? <audio controls preload="metadata" src={c.audioUrl} className="h-9 w-full" aria-label={`${c.title} 播放器`} /> : <AudioPlayer durationLabel={c.duration} seed={c.id.charCodeAt(1)} bars={20} />}
       </div>
       <button
         onClick={onSetMain}

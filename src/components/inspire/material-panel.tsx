@@ -1,3 +1,6 @@
+/**
+ * 原料区：文本/歌词/指令与录音上传 UI；「精修歌词」经 onRefine 回调触发工作台 SSE。
+ */
 'use client'
 
 import { useState } from 'react'
@@ -74,11 +77,22 @@ export interface MaterialDraft {
 function LyricsTab({
   draft,
   onChange,
+  originalLyrics,
+  isRefining,
+  refinementMessage,
+  refinementError,
+  onRefine,
+  footer,
 }: {
   draft: MaterialDraft
   onChange: (next: MaterialDraft) => void
+  originalLyrics: string
+  isRefining: boolean
+  refinementMessage: string
+  refinementError: string
+  onRefine: () => void
+  footer?: React.ReactNode
 }) {
-  const [refined] = useState(true)
   const [view, setView] = useState<'refined' | 'original'>('refined')
   return (
     <div className="space-y-4">
@@ -105,12 +119,14 @@ function LyricsTab({
         />
       </Field>
 
-      <button className="flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted">
-        <Sparkles className="size-4 text-brand" />
-        精修歌词
+      <button onClick={onRefine} disabled={isRefining || !draft.lyrics.trim()} className="flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-wait disabled:opacity-60">
+        <Sparkles className={cn('size-4 text-brand', isRefining && 'animate-pulse')} />
+        {isRefining ? 'DeepSeek 精修中…' : '精修歌词'}
       </button>
+      {refinementMessage && <p className="text-xs leading-relaxed text-muted-foreground">{refinementMessage}</p>}
+      {refinementError && <p role="alert" className="text-xs text-destructive">{refinementError}</p>}
 
-      {refined && (
+      {draft.lyrics && (
         <div className="rounded-lg border border-border bg-muted/40">
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
             <span className="text-xs font-medium text-foreground">精修结果</span>
@@ -132,9 +148,7 @@ function LyricsTab({
             </div>
           </div>
           <pre className="whitespace-pre-wrap px-3 py-2.5 font-sans text-sm leading-relaxed text-foreground">
-            {view === 'refined'
-              ? `路灯把影子拉得好长\n我数着水洼里碎的光\n没人追问我去向何方\n就走到天亮\n\n（副歌）\n把夜色都留在身后吧\n剩下的路 我陪我自己走`
-              : draft.lyrics}
+            {view === 'refined' ? draft.lyrics : originalLyrics}
           </pre>
         </div>
       )}
@@ -343,6 +357,12 @@ export function MaterialPanel({
   onSetCover,
   draft,
   onDraftChange,
+  originalLyrics,
+  isRefining,
+  refinementMessage,
+  refinementError,
+  onRefine,
+  footer,
 }: {
   selectedInputs: InputKind[]
   onToggleInput: (k: InputKind) => void
@@ -350,6 +370,12 @@ export function MaterialPanel({
   onSetCover: () => void
   draft: MaterialDraft
   onDraftChange: (next: MaterialDraft) => void
+  originalLyrics: string
+  isRefining: boolean
+  refinementMessage: string
+  refinementError: string
+  onRefine: () => void
+  footer?: React.ReactNode
 }) {
   const [tab, setTab] = useState<Tab>('text')
 
@@ -403,12 +429,13 @@ export function MaterialPanel({
           />
         </div>
 
-        {tab === 'text' && <LyricsTab draft={draft} onChange={onDraftChange} />}
+        {tab === 'text' && <LyricsTab draft={draft} onChange={onDraftChange} originalLyrics={originalLyrics} isRefining={isRefining} refinementMessage={refinementMessage} refinementError={refinementError} onRefine={onRefine} />}
         {tab === 'audio' && <AudioTab />}
         {tab === 'image' && (
           <ImageTab coverSet={coverSet} onSetCover={onSetCover} />
         )}
       </div>
+      {footer && <div className="shrink-0 border-t border-border bg-card p-4">{footer}</div>}
     </div>
   )
 }

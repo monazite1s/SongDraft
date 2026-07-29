@@ -1,3 +1,4 @@
+/** 公开分享页：按 Token 加载只读 Demo 与评论。 */
 import { notFound } from "next/navigation";
 
 import { PublicShareClient } from "@/components/sharing/public-share-client";

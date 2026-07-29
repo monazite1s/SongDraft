@@ -1,3 +1,4 @@
+/** 灵感上传第三步：校验存储对象并标记素材 ready。 */
 import { z } from "zod";
 
 import { getObjectStorage } from "@/infrastructure/storage/factory";

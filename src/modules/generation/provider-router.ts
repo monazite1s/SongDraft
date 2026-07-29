@@ -1,3 +1,7 @@
+/**
+ * 多模态生成计划路由（docs/technical-design.md）
+ * 按素材组合产出步骤说明；真实音频由 MusicGenerator 负责，此处不调用外部 API。
+ */
 import type { CombinationKey, ExecutionKind, OutputType } from "@/shared/contracts/domain";
 
 export interface PlannedStep { title: string; executionKind: ExecutionKind; detail: string; inputs: string[]; }

@@ -10,8 +10,8 @@ const owner = { id: "00000000-0000-4000-8000-000000000077", email: "share@exampl
 test("creates a private mock link and accepts a guest comment", async () => {
   const original = process.env.DATABASE_URL;
   delete process.env.DATABASE_URL;
-  const project = await new ProjectService(new MockProjectRepository()).create(owner, { title: "海风", description: "海风吹过旧港口" });
-  const generation = await new GenerationService().generate(owner, { projectId: project.id, brief: { theme: "海风", mood: "明亮", genre: "民谣", tempo: "88 BPM" } });
+  const project = await new ProjectService(new MockProjectRepository()).create(owner, { title: "海风", description: "海风吹过旧港口", lyrics: "让海风把我们的歌带给你" });
+  const generation = await new GenerationService().generate(owner, { projectId: project.id, lyrics: project.lyrics, creativeContext: { singingMode: "chorus" } });
   const service = new ShareService();
   const link = await service.create(owner, project.id, { versionId: generation.candidates[0]!.versionId, expiresAt: new Date(Date.now() + 86_400_000).toISOString() });
   expect(await service.list(owner, project.id)).toHaveLength(1);

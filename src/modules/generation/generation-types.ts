@@ -1,4 +1,4 @@
-import type { CombinationKey, ExecutionKind, OutputType } from "@/shared/contracts/domain";
+import type { ExecutionKind } from "@/shared/contracts/domain";
 
 export type GenerationStatus = "queued" | "analyzing" | "generating" | "completed" | "failed" | "cancelled";
 
@@ -10,13 +10,13 @@ export interface DemoCandidate {
   durationMs: number;
   executionKind: ExecutionKind;
   hasAudio: boolean;
+  audioUrl?: string | null;
 }
 
 export interface GenerationResult {
   jobId: string;
   status: GenerationStatus;
   progress: number;
-  plan: { id: string; combination: CombinationKey; outputType: OutputType; providerName: string; confirmedAt: string; steps: Array<{ title: string; executionKind: ExecutionKind; detail: string }> };
   candidates: DemoCandidate[];
 }
 
@@ -29,4 +29,6 @@ export interface DemoVersionView {
   createdAt: string;
   executionKind: ExecutionKind;
   hasAudio: boolean;
+  audioUrl?: string | null;
+  restoredFromVersionId?: string | null;
 }

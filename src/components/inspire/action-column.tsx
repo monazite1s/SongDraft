@@ -1,3 +1,6 @@
+/**
+ * 生成控制列：确认 Brief 后触发「生成 Demo」（工作台 createVersion → MiniMax）。
+ */
 'use client'
 
 import {

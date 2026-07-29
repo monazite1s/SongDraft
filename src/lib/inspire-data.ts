@@ -24,6 +24,17 @@ export interface Provider {
 
 export const PROVIDERS: Provider[] = [
   {
+    id: 'minimax',
+    name: 'MiniMax Music 2.6',
+    vendor: 'MiniMax',
+    supports: ['text', 'audio'],
+    outputs: ['song'],
+    mode: 'real',
+    status: 'ready',
+    note: '当前真实歌曲生成通道；图片输入不会发送给音乐模型。',
+    latency: '通常约 40–180s / 首条',
+  },
+  {
     id: 'aurora',
     name: 'Aurora Compose v2',
     vendor: 'Aurora Audio',
@@ -134,6 +145,7 @@ export interface DemoCandidate {
   key: string
   isMain?: boolean
   descriptor: string
+  audioUrl?: string
 }
 
 export const DEMO_CANDIDATES: DemoCandidate[] = [

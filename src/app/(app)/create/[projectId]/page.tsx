@@ -1,3 +1,4 @@
+/** 已有项目制作台：校验所有权后注入 initialProject。 */
 import { notFound } from "next/navigation";
 
 import { SongDraftWorkspace } from "@/components/inspire/workspace";

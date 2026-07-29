@@ -1,3 +1,4 @@
+/** 公开分享页数据：按 Token 返回可播放 Demo（无管理权限）。 */
 import { z } from "zod";
 
 import { ShareService } from "@/modules/sharing/share-service";

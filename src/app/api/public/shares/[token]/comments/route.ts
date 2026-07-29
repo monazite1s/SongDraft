@@ -1,3 +1,4 @@
+/** 公开分享页发表评论（可绑定 atMs 时间点，docs/SPEC.md 评论规则）。 */
 import { z } from "zod";
 
 import { getCurrentUser } from "@/modules/auth/queries";

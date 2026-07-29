@@ -4,6 +4,7 @@ export function isSupabaseConfigured() {
   );
 }
 
+/** 是否启用开发 Mock Auth：生产恒为 false；本地无 Supabase 时默认 mock。 */
 export function isMockAuthEnabled() {
   if (process.env.NODE_ENV === "production") return false;
 

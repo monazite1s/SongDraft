@@ -1,3 +1,4 @@
+/** 灵感上传第一步：创建意图并返回直传签名 URL。 */
 import { getObjectStorage } from "@/infrastructure/storage/factory";
 import { getCurrentUser } from "@/modules/auth/queries";
 import { getUploadRepository } from "@/modules/inspiration/upload-repository";

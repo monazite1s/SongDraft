@@ -1,5 +1,8 @@
 "use client";
 
+/**
+ * 公开分享页客户端：收听 Demo + 发表评论（无分享/编辑等管理操作，docs/SPEC.md 分享页）。
+ */
 import { LoaderCircle, MessageCircle, Music2, Send } from "lucide-react";
 import { useState } from "react";
 

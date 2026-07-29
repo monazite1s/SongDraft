@@ -5,11 +5,10 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
 import HomePage from "./(app)/page";
 
-test("renders the SongDraft inspiration entry", () => {
+test("renders the SongDraft inspiration record entry", () => {
   render(<HomePage />);
 
-  expect(screen.getByText("SongDraft")).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "素材构建" })).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "创意简报" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "生成 Demo 将生成 3 条 歌曲 Demo 候选" })).toBeInTheDocument();
+  expect(screen.getByText("灵感记录")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "先把这一刻留下来" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: /录音/ })).toBeInTheDocument();
 });

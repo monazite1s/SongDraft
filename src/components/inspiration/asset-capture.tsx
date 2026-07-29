@@ -1,3 +1,7 @@
+/**
+ * 灵感素材采集 UI：录音/选文件 → POST intents → PUT 直传 → POST complete。
+ * 必须先完成持久化再关联项目（docs/SPEC.md 灵感记录）。
+ */
 "use client";
 
 import { FileUp, LoaderCircle, Mic, Square, UploadCloud } from "lucide-react";
@@ -14,6 +18,7 @@ export function AssetCapture({ projectId, kind, onUploaded }: { projectId: strin
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState("");
 
+  /** intent → 直传 PUT → complete，全部成功后回调 ready 素材。 */
   async function upload(file: File, uploadKind: AssetKind) {
     setIsUploading(true); setError("");
     try {

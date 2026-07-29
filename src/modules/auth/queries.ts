@@ -1,3 +1,8 @@
+/**
+ * 当前用户查询（docs/technical-design.md §6）
+ * AUTH_MODE=mock 时返回固定 Demo 用户；生产禁用 Mock Auth，改走 Supabase。
+ * Route Handler / Server Component 统一经此取会话，浏览器不接触 Provider Key。
+ */
 import { redirect } from "next/navigation";
 
 import { isMockAuthEnabled, isSupabaseConfigured } from "@/infrastructure/auth/config";
@@ -10,6 +15,7 @@ const mockUser: AuthUser = {
   displayName: "Demo 创作者",
 };
 
+/** 当前登录用户；Mock 模式返回固定 Demo 用户。 */
 export async function getCurrentUser(): Promise<AuthUser | null> {
   if (isMockAuthEnabled()) return mockUser;
   if (!isSupabaseConfigured()) return null;

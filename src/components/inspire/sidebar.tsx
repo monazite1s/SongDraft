@@ -15,8 +15,9 @@ import {
 import { cn } from '@/lib/utils'
 
 const nav = [
-  { icon: LayoutGrid, label: '创作工作台', href: '/', active: true },
-  { icon: FolderClosed, label: '作品库', href: '/works' },
+  { icon: Lightbulb, label: '灵感记录', href: '/', active: true },
+  { icon: LayoutGrid, label: '制作台', href: '/create' },
+  { icon: FolderClosed, label: '创作库', href: '/works' },
   { icon: Cpu, label: '设置', href: '/settings' },
 ]
 
@@ -39,10 +40,10 @@ export function Sidebar() {
       </div>
 
       <div className="px-3 pb-2">
-        <button className="flex w-full items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">
+        <Link href="/" className="flex w-full items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">
           <Plus className="size-4" />
           新建灵感
-        </button>
+        </Link>
       </div>
 
       <nav className="flex flex-col gap-0.5 px-3 py-2">

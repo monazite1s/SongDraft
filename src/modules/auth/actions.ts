@@ -1,3 +1,7 @@
+/**
+ * 登录 / 注册 / 登出 Server Actions。
+ * AUTH_MODE=mock 时登录直接进入首页；生产不得启用 Mock Auth。
+ */
 "use server";
 
 import { redirect } from "next/navigation";

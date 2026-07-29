@@ -1,3 +1,4 @@
+/** 所有者创建 / 列出分享链接。 */
 import { z } from "zod";
 
 import { getCurrentUser } from "@/modules/auth/queries";

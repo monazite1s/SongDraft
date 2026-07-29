@@ -18,14 +18,25 @@ const rules = {
   },
 } as const;
 
-export const createUploadIntentSchema = z
-  .object({
+const uploadIntentBase = z.object({
+  /** Client-generated IDs let a record snapshot reference a pending upload safely. */
+  assetId: z.string().uuid().optional(),
+  kind: z.enum(["audio", "image", "video"]),
+  filename: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().min(1).max(100),
+  sizeBytes: z.number().int().positive(),
+});
+
+export const createUploadIntentSchema = z.union([
+  uploadIntentBase.extend({
     projectId: z.string().uuid(),
-    kind: z.enum(["audio", "image", "video"]),
-    filename: z.string().trim().min(1).max(255),
-    mimeType: z.string().trim().min(1).max(100),
-    sizeBytes: z.number().int().positive(),
-  })
+    recordId: z.undefined().optional(),
+  }).strict(),
+  uploadIntentBase.extend({
+    recordId: z.string().uuid(),
+    projectId: z.undefined().optional(),
+  }).strict(),
+])
   .superRefine((value, context) => {
     const rule = rules[value.kind];
     const extension = value.filename.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
@@ -41,3 +52,10 @@ export const createUploadIntentSchema = z
   });
 
 export type CreateUploadIntentInput = z.infer<typeof createUploadIntentSchema>;
+
+export function getUploadScope(input: CreateUploadIntentInput) {
+  if (typeof input.projectId === "string") {
+    return { type: "project" as const, id: input.projectId };
+  }
+  return { type: "record" as const, id: input.recordId };
+}

@@ -1,5 +1,7 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -26,6 +28,8 @@ export const projectStatus = pgEnum("project_status", [
 ]);
 export const assetKind = pgEnum("asset_kind", ["text", "lyrics", "audio", "image", "video"]);
 export const assetStatus = pgEnum("asset_status", ["pending", "uploading", "ready", "failed", "deleted"]);
+export const inspirationRecordKind = pgEnum("inspiration_record_kind", ["audio", "image", "text"]);
+export const inspirationSnapshotReason = pgEnum("inspiration_snapshot_reason", ["autosave", "manual", "restore", "attach"]);
 export const executionKind = pgEnum("execution_kind", ["real_local", "real_external", "simulated"]);
 export const jobStatus = pgEnum("job_status", ["queued", "analyzing", "generating", "completed", "failed", "cancelled"]);
 
@@ -47,17 +51,94 @@ export const projects = pgTable(
     status: projectStatus("status").notNull().default("draft"),
     coverAssetId: uuid("cover_asset_id"),
     mainVersionId: uuid("main_version_id"),
+    artistId: text("artist_id"),
+    artistSnapshot: jsonb("artist_snapshot").$type<Record<string, unknown>>(),
+    creativeContext: jsonb("creative_context").$type<Record<string, unknown>>().notNull().default({}),
+    currentLyrics: text("current_lyrics"),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     ...timestamps,
   },
   (table) => [index("projects_owner_updated_idx").on(table.ownerId, table.updatedAt)],
 );
 
+export const creativeConversations = pgTable(
+  "creative_conversations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    ownerId: uuid("owner_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("active"),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex("conversations_project_idx").on(table.projectId), index("conversations_owner_updated_idx").on(table.ownerId, table.updatedAt)],
+);
+
+export const creativeMessages = pgTable(
+  "creative_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    conversationId: uuid("conversation_id").notNull().references(() => creativeConversations.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    content: text("content").notNull(),
+    eventRefs: jsonb("event_refs").$type<string[]>().notNull().default([]),
+    lyricRevision: jsonb("lyric_revision").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("messages_conversation_created_idx").on(table.conversationId, table.createdAt)],
+);
+
+/**
+ * A quick-capture record is independent from project creation. This lets users
+ * persist an idea first, then decide where it belongs.
+ */
+export const inspirationRecords = pgTable(
+  "inspiration_records",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
+    title: text("title"),
+    primaryKind: inspirationRecordKind("primary_kind").notNull(),
+    summary: text("summary"),
+    tags: jsonb("tags").$type<string[]>().notNull().default([]),
+    currentSnapshot: jsonb("current_snapshot").$type<Record<string, unknown>>().notNull().default({}),
+    currentContentHash: text("current_content_hash").notNull(),
+    versionCount: integer("version_count").notNull().default(1),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    index("inspiration_records_owner_updated_idx").on(table.ownerId, table.updatedAt),
+    index("inspiration_records_owner_project_updated_idx").on(table.ownerId, table.projectId, table.updatedAt),
+    index("inspiration_records_owner_kind_updated_idx").on(table.ownerId, table.primaryKind, table.updatedAt),
+  ],
+);
+
+/** Immutable snapshots are added only when their canonical content hash changes. */
+export const inspirationRecordVersions = pgTable(
+  "inspiration_record_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    recordId: uuid("record_id").notNull().references(() => inspirationRecords.id, { onDelete: "cascade" }),
+    versionNo: integer("version_no").notNull(),
+    snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+    contentHash: text("content_hash").notNull(),
+    reason: inspirationSnapshotReason("reason").notNull().default("autosave"),
+    createdBy: uuid("created_by").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("inspiration_record_versions_number_idx").on(table.recordId, table.versionNo),
+    uniqueIndex("inspiration_record_versions_hash_idx").on(table.recordId, table.contentHash),
+  ],
+);
+
 export const inspirationAssets = pgTable(
   "inspiration_assets",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    recordId: uuid("record_id").references(() => inspirationRecords.id, { onDelete: "set null" }),
     ownerId: uuid("owner_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
     kind: assetKind("kind").notNull(),
     content: text("content"),
@@ -71,7 +152,12 @@ export const inspirationAssets = pgTable(
     metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
     ...timestamps,
   },
-  (table) => [index("assets_project_created_idx").on(table.projectId, table.createdAt)],
+  (table) => [
+    index("assets_project_created_idx").on(table.projectId, table.createdAt),
+    index("assets_record_created_idx").on(table.recordId, table.createdAt),
+    // An uploaded file may be pending project selection, but must always have an owner scope.
+    check("assets_project_or_record_check", sql`${table.projectId} IS NOT NULL OR ${table.recordId} IS NOT NULL`),
+  ],
 );
 
 export const analysisResults = pgTable("analysis_results", {

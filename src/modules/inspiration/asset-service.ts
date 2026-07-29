@@ -1,3 +1,7 @@
+/**
+ * 灵感素材读写（下载签名、软删除）。
+ * 配合 UploadService：记录必须先持久化，再与项目关联使用。
+ */
 import { and, eq } from "drizzle-orm";
 
 import { getDatabase } from "@/infrastructure/db/client";
@@ -8,6 +12,7 @@ import type { AuthUser } from "@/modules/auth/types";
 import { DomainError } from "@/shared/errors/domain-error";
 
 export class AssetService {
+  /** 为所有者签发短时下载 URL（浏览器不接触 COS Secret）。 */
   async download(owner: AuthUser, assetId: string) {
     if (!process.env.DATABASE_URL) {
       const project = await this.findMockAsset(owner, assetId);
@@ -19,6 +24,7 @@ export class AssetService {
     return { url: await getObjectStorage().createDownload(asset.objectKey, 300), expiresInSeconds: 300 };
   }
 
+  /** 软删除素材（不物理删对象，标记 deleted / included=false）。 */
   async softDelete(owner: AuthUser, assetId: string) {
     if (!process.env.DATABASE_URL) {
       const asset = await this.findMockAsset(owner, assetId);

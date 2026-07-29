@@ -8,7 +8,6 @@
 'use client'
 
 import { Loader2, Sparkles } from 'lucide-react'
-import { type InputKind } from '@/lib/inspire-data'
 
 export type Phase = 'idle' | 'brief' | 'results'
 export type Busy = false | 'analyze' | 'generate'
@@ -18,18 +17,20 @@ export const QUANTITIES = [1, 3, 5, 10] as const
 
 /**
  * 固定在左侧素材面板底部的主操作按钮：生成 / 重新生成创意简报。
- * 无素材或繁忙时禁用。
+ * 无实质内容或繁忙时禁用（基于 hasAnyContent，而非 selectedInputs 数量——
+ * selectedInputs 默认全选，无法反映「是否真有歌词/音频/图像内容」）。
  */
 export function WorkspacePrimaryAction({
   busy,
-  selectedInputs,
+  hasAnyContent,
   onPrimary,
 }: {
   busy: Busy
-  selectedInputs: InputKind[]
+  /** 是否存在任一可生成内容（歌词/创作提示/音频/图像/封面等）。 */
+  hasAnyContent: boolean
   onPrimary: () => void
 }) {
-  const disabled = !!busy || selectedInputs.length === 0
+  const disabled = !!busy || !hasAnyContent
   const analyzing = busy === 'analyze'
 
   return (

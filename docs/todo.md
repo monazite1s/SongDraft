@@ -3,73 +3,58 @@
 > 更新记录：
 > - 2026-07-30 初版：基于 SPEC + 代码级深挖的分级 TODO。
 > - 2026-07-30 二次：P0-1/P0-2/P0-3 已完成，标注完成状态；新增「部署与国内生产化」整节。
+> - 2026-07-30 三次：更正 4 处过期 todo 项（分享白名单已实现、DELETE 端点已存在、版本树已接真实数据、PROMPT_VERSIONS 已落库）；重写为上线前唯一事实清单。
 >
-> 事实校正：① 迁移无漂移——`creative_briefs` 在 0000、`inspiration_records` 在 0002，16 张表都有迁移；本轮新增 `generation_candidates`（迁移 0003）。缺的是全新表 `share_members`（schema 里还没有）。② `docs/delivery-readiness.md` 已过期（描述的是已删除的"对话式首页/艺人 Hero"v0），不能作为上线依据。
+> **重要说明**：本文件是上线前唯一事实清单，其余 todo 文档（implementation-todo.md / implementation-todo-spec-coverage.md / future-work.md）为历史设计蓝图，所有未完成且有效的项已合并至此。
 
-核心判断：服务层（鉴权/所有权/事务/快照去重/迁移）质量高、骨架是生产级；SPEC 的四条核心链路中 **Brief 生成 / 候选/版本拆分 / 生成参数透传 三条已端到端打通**，剩余 **灵感库、分享白名单** 两条核心链路 + 大量前端 mock 壳 + 部署/国内化待办。标签：🛠开发 / 🔌接入API / 🔗联调。状态：✅已完成 / 🟡部分 / ⬜未开始。
-
----
-
-## 🔴 P0 阻塞上线（核心功能链路）
-
-### #1 Brief 生成链路 — ✅ 已完成（2026-07-30）
-- 原现状：前端 `generateBrief()` 是 `setTimeout` 假动作，永远显示硬编码 `DEFAULT_BRIEF`；无 brief API/Service。
-- 原计划：新建 POST/PATCH/confirm brief 三个端点 + BriefService（AI 从素材生成）；前端接真实 API。
-- **完成状态**：新增 `BriefGenerator`（DeepSeek 结构化 + 确定性 Mock）+ `BriefService`（generate/update/confirm 写 `creative_briefs`）+ 三个端点；前端 `generateBrief` 调真实 API，初始 phase=idle（简报先空，点「生成简报」后填入）。
-
-### #2 候选/版本拆分 — ✅ 已完成（2026-07-30）
-- 原现状：无 `generation_candidates` 表；生成直接 `tx.insert(demoVersions)`——违背 SPEC §7.4。
-- 原计划：新增表 + 迁移 0003；`generate()` 改为只插候选；新建 `POST /api/generation-candidates/save`。
-- **完成状态**：新增 `generation_candidates` 表 + 迁移 `0003_early_mentallo.sql`；`generate()` 只产未保存候选（按 quantity 受控并发 ≤2，不落 `demo_versions`）；`saveCandidates` 事务转正式版本（首个设主版本、回填 `savedVersionId`、**同批互为兄弟节点**）；候选多选 + 批量保存底栏已上前端。
-
-### #3 生成参数透传 — ✅ 已完成（方案 A：参数进简报，2026-07-30）
-- 原现状：`quantity`/`outputType`/`extraPrompt` 被 zod 静默丢弃；`outputType` 硬编码 `"song"`。
-- 原计划：`generateSchema` 加 confirmedBriefId，服务端从已确认 Brief 读三参数。
-- **完成状态**：`BriefPayload` 扩展承载 `outputType`/`extraPrompt`/`quantity`；`POST /api/generation-jobs` 改为只收 `projectId + briefId + idempotencyKey`，`GenerationService.generate` 从该简报读取全部参数（不再硬编码）；前端点「生成」时先把当前参数 PATCH 进简报再据此生成。注：简报沿用别名 `melody`，生成计划内部归一化为 canonical `melody_sketch`（完整重命名见 P2）。
-
-### #4 灵感库 — ✅ 已完成（2026-07-30，Track A）
-- 原现状：`/inspirations` 路由+页面完全不存在；`InspirationRepository` 无 `listPage`；`GET /api/inspirations` 仅 POST。
-- 原计划：`listPage` + 6 个端点 + 前端页（桌面表格 + H5 卡片）。
-- **完成状态**：`InspirationRepository` 扩展 listPage/findDetail/updateMeta/softDelete/listVersions/restoreVersion（Drizzle+Mock，服务端筛选分页+项目名 JOIN）；`InspirationService` + 查询 zod schema；6 个端点（GET 列表/GET 详情/PATCH/DELETE/GET versions/POST restore）；`/inspirations` 页 + 查询表单（URL 同步、条件 Chips）+ 桌面表格/H5 卡片/分页/空状态 + 灵感详情 Sheet（480px、类型预览、版本时间线、恢复二次确认）；侧栏加「灵感库」。新增 4 个单测（筛选/分页/隔离/恢复不删历史/软删除）。
-
-### #5 分享白名单 — ⬜ 未开始（安全硬伤）
-- 现状/证据：SPEC §7 核心要求未实现——任何拿到 token 的人都能无限访问（`share-service.ts:63` 只校验 token+评论开关+过期），无身份绑定/成员表/撤销。
-- 要做什么：新增 `share_members` 表 + 迁移；首次有效访问写入访问者；`getPublic`/`comment` 校验成员；owner 可列表+撤销。
+核心判断：服务层（鉴权/所有权/事务/快照去重/迁移）质量高、骨架是生产级；SPEC 的四条核心链路中 **Brief 生成 / 候选/版本拆分 / 生成参数透传 / 灵感库 四条已端到端打通**，剩余 **分享白名单验证 / 大量前端细节 / 部署/安全/测试** 待完成。标签：🛠开发 / 🔌接入API / 🔗联调。状态：✅已完成 / 🟡部分 / ⬜未开始。
 
 ---
 
-## 🟠 P1 上线前应完成（完整性 / 安全）
+## 🔴 P0 阻塞上线（核心功能缺失与安全硬伤）
 
-### 前端（🛠开发）
-- ⬜ 创作库 `/works` + 详情 `/works/[id]` 接真实 API（当前用 mock `inspire-data`）。注：原"闲置的 `works-client.tsx`"已作为死代码删除，需基于真实 `ProjectSummary` 重写。
-- ⬜ 工作台歌曲详情列（SPEC 三栏 1:1:1）：点击候选打开右侧详情栏（当前 `grid-cols-2`，候选点击只 `setMainId`）。
-- 🟡 版本树弹窗：React Flow 版本树**已重写**（点节点激活删除/应用、hover 详情、圆点背景），但**数据仍是 mock `VERSIONS`、删除/应用按钮未接 API**。应用接 `restore`，删除接新增的版本删除 API。
-- 🟡 侧栏：已用 `usePathname` 做 active 态；⬜"最近项目"仍硬编码 3 条、未接 `/api/projects`。
-- ⬜ H5 外壳：顶部栏 + 底部导航（当前移动端无导航，`sidebar.tsx` `hidden lg:flex`）。
+### 数据模型不一致与参数丢失
+- ⬜ **Brief 字段未全部进 MiniMax prompt**：`instruments`/`melodyFeatures`/`visualReferences`/`priority`/`outputType` 已落库 `creative_briefs.payload`，但 `buildMusicPrompt`（`src/modules/generation/music-generator.ts`）只取 `theme`/`genre`/`tempo`/`mood`/`extraPrompt`/`lyrics`。决定：补进 prompt 或从 Brief 删除。
+- ⬜ **theme/priority 是局部 state**：`brief-panel.tsx` 的 `theme`/`priority` 为局部 state，编辑后未 PATCH 持久化，生成时读取不到用户输入。
+- ⬜ **hummingAssetId 死字段**：`generation-service.ts` 接收 `hummingAssetId` 但 `MiniMaxMusicGenerator.create` 完全不使用，无 Cover 适配器。
+- ⬜ **outputType 别名未统一**：代码中 `melody` vs `melody_sketch` 混用（`inspire-data.ts` vs `generation-service.ts` 临时归一化），需统一为 `melody_sketch`。
 
-### 后端/API（🛠+🔌）
-- ⬜ `DELETE /api/projects/[id]/versions/[versionId]`（`GenerationService` 缺 delete）。
-- ⬜ `GET /api/generation-jobs/[id]`（任务进度/候选/脱敏错误）。
-- ⬜ MiniMax 音频转存私有 COS + 短时签名 URL（当前依赖 Provider 长期 URL）。
-- ⬜ 3 个 env 声明未接线：`SUPABASE_SERVICE_ROLE_KEY` / `TENCENT_COS_PUBLIC_BASE_URL` / `PROVIDER_SECRET_ENCRYPTION_KEY`——接或删。
-- ⬜ `AnalysisService`/`ProfileService` mock 存储改 `globalThis`（当前模块级 Map，多实例不一致）。
-- ⬜ 工作台首屏聚合 API（见部署节 #7），避免首屏多次串行往返。
+### 存储与安全
+- ⬜ **MiniMax 音频未转存 COS**：`music-generator.ts` 只返回 Provider 临时 URL 直接存 `generation_candidates.audio_url`，无转存私有 COS + 短时签名播放（长期依赖 Provider URL）。
+- ⬜ **分享白名单未联调验证**：✅ `share_access_grants` 表已建（迁移 0004）+ `ShareService` 白名单逻辑（owner 放行/首次访问建授权/撤销/lastAccessedAt）已实现；⬜ **需真实环境联调验证**（当前开发环境无法验证完整链路）。
+- ⬜ **STORAGE_DRIVER 默认 mock**：环境变量未配置时静默降级到 mock 存储，无启动期 fail-fast 校验，生产误用风险。
+- ✅ **3 个 env 声明但未接线**：已复核确认 `SUPABASE_SERVICE_ROLE_KEY`/`TENCENT_COS_PUBLIC_BASE_URL`/`PROVIDER_SECRET_ENCRYPTION_KEY` 在 `src/` 全量零引用（仅本文档/`delivery-readiness.md` 提及）。`.env.example` 在仓库中实际不存在（未被 git 追踪、磁盘无此文件，快照里的 `M .env.example` 已过期），因此无需删改 env 文件。结论：已确认未使用，暂不接入；未来如需服务端特权操作（service role）/ COS 公开读基址 / Provider 密钥加密，再按需新增并在 `.env.example` 声明。
 
-### 安全（🛠）
-- ⬜ `next.config.ts` 加安全头：CSP / `X-Frame-Options` / HSTS / `Referrer-Policy`（分享页 `/s/[token]` 尤其需要防嵌套）。
-- ⬜ 启动期 zod env 校验 + fail-fast（当前缺配置静默降级到 mock/401）。
-- ⬜ 公开评论身份策略（是否强制登录以对齐白名单）。
+### 前端缺失与假壳
+- ⬜ **假按钮未接线**：复制为新项目/导出 PDF/分析旋律/分析画面 → 接真实或 disabled+tooltip 或删除。
+- ⬜ **侧栏「最近项目」仍硬编码**：曾为 mock 3 条，需接 `/api/projects`（`src/components/inspire/sidebar.tsx`）。
+
+### 后端缺失
+- ⬜ **GET /api/generation-jobs/[id] 不存在**：只有 POST，无法轮询恢复未完成任务（页面刷新后任务丢失）。
+- ⬜ **CI/健康检查/E2E 全空**：`.github/workflows` 不存在；无 `/api/health`；`tests/e2e/` 零用例。
+
+---
+
+## 🟠 P1 上线前应完成（完整性 / 用户体验 / 安全）
+
+### 前端完整性
+- ⬜ **H5 外壳**：顶部栏 + 底部导航（当前移动端无导航，`sidebar.tsx` `hidden lg:flex`）。
+- ⬜ **版本树数据仍是 mock VERSIONS**：✅ mock 常量已清除，版本树已接真实 `listVersions`（`src/lib/inspire-data.ts`）；⬜ **需验证节点渲染/删除/应用接线**。
+- ⬜ **DELETE 端点接线**：✅ `DELETE /api/projects/[id]/versions/[versionId]` 已存在，`GenerationService.delete` 已实现（子节点 parent 上移、主版本迁移）；⬜ **前端版本弹窗「删除」按钮需接线**。
+- ✅ **next.config.ts 安全头**：已在 `next.config.ts` 加 `headers()`（应用于 `/:path*`）：X-Frame-Options(SAMEORIGIN)/X-Content-Type-Options/Referrer-Policy/Permissions-Policy(camera+mic self)/HSTS，并加了保守 CSP（保留 `unsafe-inline` 兼容 Next 内联脚本与 Tailwind 内联样式，`connect-src 'self' https:` 覆盖同源 SSE，`media-src ... blob: https:` 兼容录音 blob 与 MiniMax 外链音频）。`pnpm build` 通过。
+- ⬜ **启动期 env 校验**：缺配置时 fail-fast 而非静默降级（避免生产误用 mock）。
+
+### 后端/API
+- ⬜ **工作台首屏聚合 API**：避免 N+1 串行往返（当前首屏多次独立请求）。
 
 ---
 
 ## 🟡 P2 增强 / 上线后迭代
 
-- ⬜ DeepSeek 真 SSE token 直通（当前伪流式：先全量返回再切片，`creative-chat/stream/route.ts:36`）。配合部署节 #8 轮询降级。
-- ⬜ 哼唱 MiniMax Cover 预处理 / 短时 COS GET URL。
-- 🟡 波形/播放器接 wavesurfer.js：**库已装**，`AudioPlayer` 当前仍是 mock 波形。
-- 🟡 继续用 shadcn/ui 组件化：**已初始化 `components.json` + 装 Button/RadioTags**，后续逐步替换手写组件。
-- ⬜ IndexedDB 离线补交、HEIC 转码、A/B 同步播放、版本树自动布局精调。
-- ⬜ outputType 别名清理 `melody`→`melody_sketch`（数据模型连带，风险项；生成计划内部已临时归一化）。
+- ⬜ **DeepSeek 真 SSE token 直通**：当前伪流式（先全量返回再切片，`creative-chat/stream/route.ts:36`）。
+- ⬜ **波形/播放器接 wavesurfer.js**：库已装，`AudioPlayer` 仍伪波形。
+- ⬜ **IndexedDB 离线补交、HEIC 转码、A/B 同步播放**。
+- ⬜ **分轨(mute/solo)/词曲双通道**：无 `demo_stems` 表、无 Web Audio 多轨播放。
 
 ---
 
@@ -78,15 +63,14 @@
 > 结论：Vercel 不能当国内稳定性保障。正式面向大量国内用户前，要准备国内部署。落地组合：**自有域名 + Vercel hkg1 + 同区 PG + COS 直传 + 依赖本地化 + API 聚合 + SSE 降级**。现在就买可备案域名、预留 `cn` 环境。
 
 ### 当前阶段必做
-1. ⬜ **自有域名**，不用 `*.vercel.app`。
-2. ⬜ **Function 固定 `hkg1`（香港）**。
-3. ⬜ **PostgreSQL 与 Function 同区/邻近亚太**（别香港 Function + 美国库）。
-4. 🟡 **音频/图片走腾讯 COS 直传 + 短时签名播放**，不经 Vercel 中转（直传 Intent 已实现；⬜ MiniMax 结果转存 COS + 短时签名播放未做）。
-5. ⬜ **字体、脚本、图标全部本地化**（禁 Google Fonts / 海外 CDN）。
-6. ⬜ **登录不要只靠 Google**（至少邮箱；正式版考虑手机/微信）。
-7. ⬜ **工作台首屏聚合 API**，少打多次往返；避免 N+1。
-8. ⬜ **SSE 必须有轮询降级**，断线不等于生成失败。
-9. ⬜ **国内三网 + 微信内实测**，设阈值再决定是否切国内云。
+- ⬜ **自有域名**，不用 `*.vercel.app`。
+- ⬜ **Function 固定 `hkg1`（香港）**。
+- ⬜ **PostgreSQL 与 Function 同区/邻近亚太**（别香港 Function + 美国库）。
+- ⬜ **音频/图片走腾讯 COS 直传 + 短时签名播放**，不经 Vercel 中转（直传 Intent 已实现；⬜ MiniMax 结果转存 COS + 短时签名播放未做）。
+- ⬜ **字体、脚本、图标全部本地化**（禁 Google Fonts / 海外 CDN）。
+- ⬜ **登录不要只靠 Google**（至少邮箱；正式版考虑手机/微信）。
+- ⬜ **SSE 必须有轮询降级**，断线不等于生成失败。
+- ⬜ **国内三网 + 微信内实测**，设阈值再决定是否切国内云。
 
 ### 架构原则
 | 做 | 不做 |
@@ -103,18 +87,20 @@
 ---
 
 ## 🔗 联调清单（真实环境，mock 无法替代）
+
 1. ⬜ Supabase 注册/登录/退出/刷新 Session（生产禁 `AUTH_MODE=mock`）。
 2. ⬜ PostgreSQL 迁移后重启仍恢复项目/版本/评论。
 3. ⬜ COS 音频直传 / Head 校验 / 私有读 / 越权失败 / CORS。
 4. ⬜ DeepSeek 结构化响应 / 超时 / 错误脱敏。
 5. ⬜ MiniMax 真实生成 / URL 播放 / 转存 / 版权与内容审核。
-6. ⬜ 微信内浏览器 + 真机：麦克风、播放、二维码、时间点评论。
+6. ⬜ 微信内浏览器/真机：麦克风、播放、二维码、时间点评论。
 7. ⬜ Vercel Node 22 `pnpm build`。
 8. ⬜ 日志审计：Vercel Logs 不含 Secret / Token / 完整 Prompt / 歌词。
 
 ---
 
 ## 🧱 基建 / DevOps（🛠+🔗）
+
 - ⬜ Dockerfile + CI（lint/typecheck/test/drizzle check/build 门禁；当前 `.github/workflows` 不存在）。
 - ⬜ `/api/health` 健康检查（DB+存储+认证探活）。
 - ⬜ 错误监控（Sentry）。
@@ -124,6 +110,7 @@
 ---
 
 ## 🧪 测试（🛠）
+
 - ✅ 单元/组件测试：**45 个全过**（覆盖灵感快照去重、候选→版本、权限隔离、Brief 生成/编辑/确认、简报参数流入生成）。
 - ⬜ E2E 全空：`tests/e2e/` 零用例（`playwright.config.ts` 已配）。补核心创作流 + 分享访问 + 评论。
 - ⬜ 分享白名单单测/集成测（功能实现后）。
@@ -133,11 +120,22 @@
 ---
 
 ## 建议执行顺序（已更新）
+
 1. ✅ ~~P0-2 候选/版本拆分~~ → 地基已完成。
 2. ✅ ~~P0-1 Brief 链路 + P0-3 参数透传~~ → 已完成（方案 A）。
-3. ⬜ **P0-5 分享白名单**（安全硬伤，独立可并行）。
-4. ⬜ **P0-4 灵感库**（前后端独立模块）。
-5. ⬜ P1 前端接真实数据 + 版本树删除/应用接线 + 三栏详情。
-6. ⬜ 部署/国内化（自有域名 + hkg1 + 同区 PG + COS 直传 + 本地化 + 聚合 API + SSE 降级）+ 基建/安全头/CI/健康检查 + 联调。
+3. ✅ ~~P0-4 灵感库~~ → 已完成（Track A）。
+4. ⬜ **P0 数据模型一致性**（Brief 字段补 prompt / theme 持久化 / hummingAssetId 接线 / outputType 统一）。
+5. ⬜ **P0 存储/安全**（MiniMax 音频转存 COS / 分享白名单联调 / env 校验 / 环境变量清理）。
+6. ⬜ **P0 前端假壳清理**（假按钮接线 / 侧栏真实数据 / 版本树删除应用接线）。
+7. ⬜ **P0 后端缺失**（GET /api/generation-jobs/[id] / CI/健康检查/E2E）。
+8. ⬜ **P1 前端完整性**（H5 外壳 / next.config.ts 安全头 / 首屏聚合 API）。
+9. ⬜ **部署/国内化 + 联调**（自有域名 + hkg1 + 同区 PG + COS 直传 + 本地化 + 聚合 API + SSE 降级）。
 
-> 注：`docs/delivery-readiness.md` 已过期，建议同步重写。
+---
+
+## 📊 统计
+
+- **P0 条目**：4 大类（数据模型/存储安全/前端缺失/后端缺失），共 **14** 条。
+- **P1 条目**：2 大类（前端完整性/后端API），共 **5** 条。
+- **P2 条目**：共 **4** 条。
+- **已完成 P0**：Brief 生成链路 / 候选版本拆分 / 生成参数透传 / 灵感库 / 分享白名单实现（待联调）。

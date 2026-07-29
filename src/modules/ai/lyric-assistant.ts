@@ -5,9 +5,8 @@
  * 无 Key 或 TEXT_PROVIDER_MODE=mock 时使用确定性 Mock，不得伪装为真实 Provider。
  */
 import type { ArtistProfile } from "@/modules/artists/artist-types";
-import { z } from "zod";
 
-import { buildLyricSystemPrompt } from "@/modules/ai/prompts";
+import { PROMPT_REGISTRY, buildLyricSystemPrompt, lyricZodSchema } from "@/modules/ai/prompts";
 import { DomainError } from "@/shared/errors/domain-error";
 
 export interface CreativeContext {
@@ -68,15 +67,6 @@ export class MockLyricAssistant implements LyricAssistant {
   }
 }
 
-const deepSeekDraftSchema = z.object({
-  message: z.string().min(1).max(2_000),
-  lyrics: z.string().max(10_000).nullable(),
-  context: z.object({
-    emotion: z.string().min(1).max(80).default("温暖坚定"),
-    singingMode: z.enum(["chorus", "solo"]).default("chorus"),
-  }),
-});
-
 /** DeepSeek V4 Flash：系统 Prompt + 历史消息 + 结构化 user payload → Zod 校验 JSON。 */
 export class DeepSeekLyricAssistant implements LyricAssistant {
   constructor(
@@ -87,6 +77,7 @@ export class DeepSeekLyricAssistant implements LyricAssistant {
 
   async createDraft(input: CreativeChatInput): Promise<AssistantDraft> {
     if (!this.apiKey) throw new DomainError("PROVIDER_NOT_CONFIGURED", 503, "DeepSeek 尚未配置");
+    const { temperature, maxTokens, responseFormat } = PROMPT_REGISTRY.lyrics.modelParams;
     const artistContext = input.artist ? {
       id: input.artist.id,
       name: input.artist.name,
@@ -103,9 +94,9 @@ export class DeepSeekLyricAssistant implements LyricAssistant {
       body: JSON.stringify({
         model: this.model,
         thinking: { type: "disabled" },
-        temperature: 0.75,
-        max_tokens: 2_800,
-        response_format: { type: "json_object" },
+        temperature,
+        max_tokens: maxTokens,
+        response_format: { type: responseFormat },
         messages: [
           { role: "system", content: buildLyricSystemPrompt() },
           ...(input.history ?? []).slice(-20).map((message) => ({ role: message.role, content: message.content.slice(0, 4_000) })),
@@ -119,7 +110,8 @@ export class DeepSeekLyricAssistant implements LyricAssistant {
     if (!content) throw new DomainError("UPSTREAM_INVALID_RESPONSE", 502, "歌词服务返回内容无效");
     let parsed: unknown;
     try { parsed = JSON.parse(content); } catch { throw new DomainError("UPSTREAM_INVALID_RESPONSE", 502, "歌词服务返回内容无效"); }
-    const validated = deepSeekDraftSchema.safeParse(parsed);
+    // schema 由 LYRIC_TAGS 组合（lyricZodSchema）。
+    const validated = lyricZodSchema.safeParse(parsed);
     if (!validated.success) throw new DomainError("UPSTREAM_INVALID_RESPONSE", 502, "歌词服务返回内容无效");
     const draft = validated.data;
     return {

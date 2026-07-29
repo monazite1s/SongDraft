@@ -1,5 +1,7 @@
 # SongDraft 工程基础设计
 
+> 注：代码中以 docs/technical-design.md 引用的技术设计即本文件。
+
 > 状态：已由用户确认  
 > 日期：2026-07-29
 

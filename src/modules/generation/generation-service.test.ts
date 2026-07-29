@@ -21,7 +21,7 @@ async function generateAndSave(service: GenerationService, projectId: string, qu
   return saved;
 }
 
-test("generates unsaved candidates from the confirmed brief, then saves the picked one as a linear version", async () => {
+test("generates unsaved candidates from the confirmed brief, then restores and branches git-style", async () => {
   const original = process.env.DATABASE_URL;
   delete process.env.DATABASE_URL;
   const project = await new ProjectService(new MockProjectRepository()).create(owner, { title: "五周年", description: "一起走过五年", lyrics: "把所有星光唱给你听" });
@@ -35,15 +35,38 @@ test("generates unsaved candidates from the confirmed brief, then saves the pick
   expect(result.candidates[0]!.savedVersionId).toBeNull();
   expect(await service.listVersions(owner, project.id)).toHaveLength(0);
 
-  // 保存阶段：将选中候选转为正式版本。
+  // 保存阶段：将选中候选转为正式版本 v1（主）。
   const { saved } = await service.saveCandidates(owner, { projectId: project.id, candidateIds: [result.candidates[0]!.id] });
   expect(saved).toHaveLength(1);
   expect(saved[0]!.isMain).toBe(true);
 
-  // 恢复阶段：从历史版本复制为新的线性版本。
+  // 再保存 v2：保存时 parentId = 当时主版本 v1，v2 自动成为新主。
+  const second = await service.generate(owner, { projectId: project.id, briefId: brief.id, lyrics: project.lyrics });
+  const { saved: savedV2 } = await service.saveCandidates(owner, { projectId: project.id, candidateIds: second.candidates.map((c) => c.id) });
+  expect((await service.listVersions(owner, project.id)).find((v) => v.id === savedV2[0]!.id)!.parentId).toBe(saved[0]!.id);
+
+  // 应用历史版本 v1（git checkout）：HEAD 从 v2 移回 v1，不新建版本（无游离节点），歌词写回草稿。
+  const beforeCount = (await service.listVersions(owner, project.id)).length;
   const restored = await service.restore(owner, project.id, saved[0]!.id);
-  expect(restored.versionNo).toBe(2);
-  expect(restored.restoredFromVersionId).toBe(saved[0]!.id);
+  const after = await service.listVersions(owner, project.id);
+  expect(after).toHaveLength(beforeCount);
+  expect(restored.id).toBe(saved[0]!.id);
+  expect(restored.isMain).toBe(true);
+  expect(restored.lyrics).toBe(project.lyrics);
+  expect(after.find((v) => v.id === saved[0]!.id)!.isMain).toBe(true);
+  expect(after.find((v) => v.id === savedV2[0]!.id)!.isMain).toBe(false);
+
+  // 在 v1（HEAD）上保存新版本 → 从 v1 分叉（parentId=v1），与 v2 同级（兄弟节点），不挂在 v2 下。
+  const branch = await service.generate(owner, { projectId: project.id, briefId: brief.id, lyrics: project.lyrics });
+  const { saved: savedBranch } = await service.saveCandidates(owner, { projectId: project.id, candidateIds: branch.candidates.map((c) => c.id) });
+  const finalViews = await service.listVersions(owner, project.id);
+  expect(finalViews.find((v) => v.id === savedBranch[0]!.id)!.parentId).toBe(saved[0]!.id);
+  expect(finalViews.filter((v) => v.parentId === saved[0]!.id).map((v) => v.id).sort()).toEqual([savedBranch[0]!.id, savedV2[0]!.id].sort());
+
+  // 兄弟命名：v1（根）/ v2（主链首子）/ v2.1（回退 v1 后保存的兄弟分支）。
+  expect(finalViews.find((v) => v.id === saved[0]!.id)!.label).toBe("v1");
+  expect(finalViews.find((v) => v.id === savedV2[0]!.id)!.label).toBe("v2");
+  expect(finalViews.find((v) => v.id === savedBranch[0]!.id)!.label).toBe("v2.1");
 
   if (original) process.env.DATABASE_URL = original;
 });

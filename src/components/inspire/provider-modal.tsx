@@ -8,7 +8,7 @@ import {
   type Provider,
 } from '@/lib/inspire-data'
 import { Modal } from './modal'
-import { ModeTag, StatusDot } from './ui'
+import { StatusDot } from './ui'
 
 const CAPS: { kind: InputKind; label: string }[] = [
   { kind: 'text', label: '文本' },
@@ -63,7 +63,6 @@ export function ProviderModal({
                       <h3 className="text-sm font-semibold text-foreground">
                         {p.name}
                       </h3>
-                      <ModeTag mode={p.mode} />
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {p.vendor} · {STATUS_LABEL[p.status]} · {p.latency}
@@ -117,7 +116,7 @@ export function ProviderModal({
         })}
 
         <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
-          能力说明：切换供应商后，若已选素材包含其不支持的类型，工作台会显示警告并在生成时自动忽略这些素材。标注「模拟输出」的供应商仅用于流程演示。
+          能力说明：切换供应商后，若已选素材包含其不支持的类型，工作台会显示警告并在生成时自动忽略这些素材。
         </p>
       </div>
     </Modal>

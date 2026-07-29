@@ -1,5 +1,7 @@
 # SongDraft V4.1 需求清单
 
+> ⚠️ 本文件为 V4.1 历史需求清单，已被 docs/SPEC.md（V5）与 docs/todo.md 取代，仅作历史参考。
+
 > 本清单覆盖 V4.0 的“首页对话/艺人 Hero”需求。当前 UI 基线为 `ec532ac` 的 v0 三栏工作台。
 
 ## P0

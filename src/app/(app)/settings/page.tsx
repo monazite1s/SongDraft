@@ -238,21 +238,6 @@ export default function SettingsPage() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">
-                    默认显示真实/模拟标签
-                  </label>
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="radio" name="disclosure" defaultChecked className="w-4 h-4" />
-                      <span className="text-sm text-foreground">是</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="radio" name="disclosure" className="w-4 h-4" />
-                      <span className="text-sm text-foreground">否</span>
-                    </label>
-                  </div>
-                </div>
 
                 <div className="pt-4 border-t border-border flex justify-end gap-2">
                   <Button variant="outline">取消</Button>

@@ -1,5 +1,5 @@
 /**
- * 创作库前端筛选模型：URL ↔ state 双向同步。
+ * 歌曲库前端筛选模型：URL ↔ state 双向同步。
  * 与灵感库一致，搜索框 query + 排序 sort，分页上限 48。
  */
 import type {
@@ -9,9 +9,9 @@ import type {
 
 export type WorksSort = "updated" | "created";
 
-/** 创作库列表项 = 带灵感数/歌曲数/封面的项目摘要。 */
+/** 歌曲库列表项 = 带灵感数/歌曲数/封面的项目摘要。 */
 export type WorksItem = ProjectListItem;
-/** 创作库分页结果（items 为 ProjectListItem）。 */
+/** 歌曲库分页结果（items 为 ProjectListItem）。 */
 export type WorksListPage = ProjectListPage<ProjectListItem>;
 
 export type WorksFilters = {

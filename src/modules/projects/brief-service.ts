@@ -12,6 +12,7 @@ import { z } from "zod";
 import { getDatabase } from "@/infrastructure/db/client";
 import { creativeBriefs } from "@/infrastructure/db/schema";
 import { getBriefGenerator, type BriefPayload } from "@/modules/ai/brief-generator";
+import { PROMPT_REGISTRY } from "@/modules/ai/prompts";
 import type { AuthUser } from "@/modules/auth/types";
 import { getProjectRepository } from "@/modules/projects/project-repository";
 import { DomainError } from "@/shared/errors/domain-error";
@@ -74,7 +75,7 @@ export class BriefService {
     const db = getDatabase();
     const [last] = await db.select({ revision: creativeBriefs.revision }).from(creativeBriefs).where(eq(creativeBriefs.projectId, projectId)).orderBy(desc(creativeBriefs.revision)).limit(1);
     const revision = (last?.revision ?? 0) + 1;
-    const [row] = await db.insert(creativeBriefs).values({ projectId, revision, payload: payload as unknown as Record<string, unknown>, createdBy: owner.id }).returning();
+    const [row] = await db.insert(creativeBriefs).values({ projectId, revision, payload: payload as unknown as Record<string, unknown>, promptVersion: PROMPT_REGISTRY.brief.version, createdBy: owner.id }).returning();
     if (!row) throw new Error("Brief creation failed");
     return mapView(row);
   }

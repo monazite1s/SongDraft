@@ -1,13 +1,13 @@
 "use client";
 
 /**
- * 创作库客户端（/works）。
- * 管理 URL ↔ 筛选状态双向同步、服务端分页请求；桌面表格 / H5 卡片；行点击进入项目详情。
+ * 歌曲库客户端（/works）。
+ * 管理 URL ↔ 筛选状态双向同步、服务端分页请求；桌面表格 / H5 卡片；行点击进入歌曲详情。
  * 照搬灵感库（inspiration-library-client）的结构。
  */
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, FolderClosed, Plus, RotateCcw, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Music, Plus, RotateCcw, Search, X } from "lucide-react";
 import Link from "next/link";
 
 import { cn } from "@/lib/utils";
@@ -99,11 +99,11 @@ export function WorksLibraryClient({
       <>
         <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-center px-5 py-24 text-center lg:px-8">
           <div className="flex size-10 items-center justify-center rounded-full bg-muted">
-            <FolderClosed className="size-5 text-muted-foreground" />
+            <Music className="size-5 text-muted-foreground" />
           </div>
-          <p className="mt-3 text-sm font-medium text-foreground">还没有项目</p>
+          <p className="mt-3 text-sm font-medium text-foreground">还没有歌曲</p>
           <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-            在灵感记录页保存到项目后，项目会自动出现在这里
+            在灵感记录页保存到歌曲后，歌曲会自动出现在这里
           </p>
           <div className="mt-4 flex gap-2">
             <Link href="/">
@@ -111,7 +111,7 @@ export function WorksLibraryClient({
             </Link>
             <Button type="button" onClick={() => setCreateOpen(true)}>
               <Plus className="size-4" />
-              新建项目
+              新建歌曲
             </Button>
           </div>
         </div>
@@ -126,16 +126,16 @@ export function WorksLibraryClient({
       <header className="flex items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-brand">
-            <FolderClosed className="size-4" />
-            <span className="text-sm font-medium">创作库</span>
+            <Music className="size-4" />
+            <span className="text-sm font-medium">歌曲库</span>
           </div>
           <h1 className="mt-1.5 text-xl font-semibold tracking-tight text-foreground">
-            创作库 · 共 {total} 个项目
+            歌曲库 · 共 {total} 首歌
           </h1>
         </div>
         <Button type="button" onClick={() => setCreateOpen(true)}>
           <Plus className="size-4" />
-          新建项目
+          新建歌曲
         </Button>
       </header>
 
@@ -166,7 +166,7 @@ export function WorksLibraryClient({
               <table className="w-full text-sm">
                 <thead className="border-b border-border bg-muted/40 text-left text-xs font-medium text-muted-foreground">
                   <tr>
-                    <th className="px-4 py-2.5 font-medium">项目</th>
+                    <th className="px-4 py-2.5 font-medium">歌曲</th>
                     <th className="px-3 py-2.5 font-medium">状态</th>
                     <th className="px-3 py-2.5 text-right font-medium">灵感数</th>
                     <th className="px-3 py-2.5 text-right font-medium">歌曲数</th>
@@ -218,7 +218,7 @@ function CoverTile({ title, coverUrl }: { title: string; coverUrl: string | null
       </span>
     );
   }
-  const first = title.trim().charAt(0) || "项";
+  const first = title.trim().charAt(0) || "歌";
   return (
     <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-brand-muted text-xs font-medium text-foreground">
       {first}
@@ -275,7 +275,7 @@ function MobileCardInner({ item }: { item: WorksItem }) {
 }
 
 /**
- * 创作库查询表单：关键词 + 排序。受控草稿，点「查询」提交。
+ * 歌曲库查询表单：关键词 + 排序。受控草稿，点「查询」提交。
  */
 function WorksSearchForm({
   value,
@@ -312,7 +312,7 @@ function WorksSearchForm({
               onKeyDown={(e) => {
                 if (e.key === "Enter") apply();
               }}
-              placeholder="搜索项目标题或描述"
+              placeholder="搜索歌曲标题或描述"
             />
           </div>
         </label>
@@ -389,7 +389,7 @@ function Pagination({
   return (
     <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
       <span>
-        第 {data.page} / {data.totalPages} 页 · 共 {data.total} 个项目
+        第 {data.page} / {data.totalPages} 页 · 共 {data.total} 首歌
       </span>
       <div className="flex gap-2">
         <Button variant="outline" size="sm" disabled={data.page <= 1} onClick={() => onPage(data.page - 1)}>
@@ -414,9 +414,9 @@ function NoMatchState({ onClear }: { onClear: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card px-6 py-16 text-center">
       <div className="flex size-10 items-center justify-center rounded-full bg-muted">
-        <FolderClosed className="size-5 text-muted-foreground" />
+        <Music className="size-5 text-muted-foreground" />
       </div>
-      <p className="mt-3 text-sm font-medium text-foreground">没有匹配的项目</p>
+      <p className="mt-3 text-sm font-medium text-foreground">没有匹配的歌曲</p>
       <p className="mt-1 text-xs text-muted-foreground">试试清除部分筛选条件</p>
       <div className="mt-4">
         <Button variant="outline" onClick={onClear}>

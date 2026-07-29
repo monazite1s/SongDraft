@@ -177,6 +177,8 @@ export const creativeBriefs = pgTable("creative_briefs", {
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   revision: integer("revision").notNull().default(1),
   payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+  /** 生成该简报所用 system prompt 的版本（PROMPT_VERSIONS.brief），可空以兼容历史数据。 */
+  promptVersion: text("prompt_version"),
   confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
   createdBy: uuid("created_by").notNull().references(() => profiles.id),
   ...timestamps,
@@ -266,6 +268,9 @@ export const generationCandidates = pgTable(
     audioUrl: text("audio_url"),
     durationMs: integer("duration_ms").notNull(),
     executionKind: executionKind("execution_kind").notNull(),
+    /** 音乐生成所用 prompt 版本（PROMPT_VERSIONS.music）与模型名，可空以兼容历史数据。 */
+    promptVersion: text("prompt_version"),
+    modelVersion: text("model_version"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
     savedVersionId: uuid("saved_version_id").references(() => demoVersions.id, { onDelete: "set null" }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),

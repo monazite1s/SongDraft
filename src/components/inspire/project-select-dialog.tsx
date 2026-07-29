@@ -8,7 +8,7 @@
  * 弹窗逻辑叠加在 create/page 层，不修改 workspace 内部。
  */
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import { X, FolderPlus, Plus } from 'lucide-react'
 
 import type { ProjectSummary } from '@/modules/projects/project-types'
@@ -30,6 +30,7 @@ function formatDate(iso: string): string {
 
 export function ProjectSelectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter()
+  const pathname = usePathname()
   const [title, setTitle] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
@@ -95,6 +96,13 @@ export function ProjectSelectDialog({ open, onClose }: { open: boolean; onClose:
 
   function handleEnter() {
     if (!selectedId || entering) return
+    // 选择当前已在的项目时短路：同路径 router.push 在 App Router 下会反复触发段重渲染（卡死），
+    // 直接关闭弹窗即可（HEAD/草稿不变）。
+    const current = /\/create\/([^/]+)/.exec(pathname)?.[1]
+    if (current && current === selectedId) {
+      onClose()
+      return
+    }
     setEntering(true)
     router.push(`/create/${selectedId}`)
   }

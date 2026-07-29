@@ -6,9 +6,7 @@
  */
 import "server-only";
 
-import { z } from "zod";
-
-import { buildBriefSystemPrompt } from "@/modules/ai/prompts";
+import { PROMPT_REGISTRY, buildBriefSystemPrompt, briefZodSchema } from "@/modules/ai/prompts";
 import { DomainError } from "@/shared/errors/domain-error";
 
 export interface BriefGenerationInput {
@@ -22,7 +20,11 @@ export interface BriefEvidence {
   detail: string;
 }
 
-/** 输出类型（与前端 OutputType 保持一致；melody→melody_sketch 重命名记为 P0 todo）。 */
+/**
+ * 输出类型（与前端 OutputType 保持一致）。
+ * 注意：对外（前端/简报 payload）保持 "melody"；路由层（provider-router）将其映射为
+ * canonical "melody_sketch"（见 generation-service）。本字段已不再有遗留命名待办。
+ */
 export type BriefOutputType = "song" | "soundtrack" | "melody";
 
 export interface BriefPayload {
@@ -70,23 +72,6 @@ export class MockBriefGenerator implements BriefGenerator {
   }
 }
 
-const briefSchema = z.object({
-  theme: z.string().min(1).max(120),
-  mood: z.array(z.string().min(1).max(40)).min(1).max(8),
-  genre: z.string().min(1).max(80),
-  tempo: z.string().min(1).max(40),
-  instruments: z.array(z.string().min(1).max(40)).max(12).default([]),
-  lyricSummary: z.string().max(500).default(""),
-  melodyFeatures: z.string().max(300).default(""),
-  visualReferences: z.string().max(300).default(""),
-  evidence: z.array(z.object({ source: z.string().min(1).max(40), detail: z.string().min(1).max(200) })).default([]),
-  conflicts: z.array(z.string().max(200)).default([]),
-  priority: z.string().max(300).default(""),
-  outputType: z.enum(["song", "soundtrack", "melody"]).default("song"),
-  extraPrompt: z.string().max(1000).default(""),
-  quantity: z.number().int().min(1).max(10).default(3),
-});
-
 /** DeepSeek：项目素材 → 结构化创意简报 JSON（Zod 校验）。 */
 export class DeepSeekBriefGenerator implements BriefGenerator {
   constructor(
@@ -97,6 +82,7 @@ export class DeepSeekBriefGenerator implements BriefGenerator {
 
   async generate(input: BriefGenerationInput): Promise<BriefPayload> {
     if (!this.apiKey) throw new DomainError("PROVIDER_NOT_CONFIGURED", 503, "DeepSeek 尚未配置");
+    const { temperature, maxTokens, responseFormat } = PROMPT_REGISTRY.brief.modelParams;
     const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.apiKey}`, "content-type": "application/json" },
@@ -104,9 +90,9 @@ export class DeepSeekBriefGenerator implements BriefGenerator {
       body: JSON.stringify({
         model: this.model,
         thinking: { type: "disabled" },
-        temperature: 0.6,
-        max_tokens: 2_400,
-        response_format: { type: "json_object" },
+        temperature,
+        max_tokens: maxTokens,
+        response_format: { type: responseFormat },
         messages: [
           { role: "system", content: buildBriefSystemPrompt() },
           { role: "user", content: JSON.stringify({ projectTitle: input.projectTitle, description: input.description, lyrics: input.lyrics }) },
@@ -119,7 +105,8 @@ export class DeepSeekBriefGenerator implements BriefGenerator {
     if (!content) throw new DomainError("UPSTREAM_INVALID_RESPONSE", 502, "简报服务返回内容无效");
     let parsed: unknown;
     try { parsed = JSON.parse(content); } catch { throw new DomainError("UPSTREAM_INVALID_RESPONSE", 502, "简报服务返回内容无效"); }
-    const validated = briefSchema.safeParse(parsed);
+    // schema 由 BRIEF_TAGS 组合（briefZodSchema），消除手写双份维护。
+    const validated = briefZodSchema.safeParse(parsed);
     if (!validated.success) throw new DomainError("UPSTREAM_INVALID_RESPONSE", 502, "简报服务返回内容无效");
     return validated.data;
   }

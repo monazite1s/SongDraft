@@ -24,4 +24,9 @@ export interface ObjectStorage {
   createDownload(objectKey: string, expiresInSeconds: number): Promise<string>;
   head(objectKey: string): Promise<StoredObject | null>;
   delete(objectKey: string): Promise<void>;
+  /**
+   * 服务端直传：把一段 Buffer 写入指定 objectKey。
+   * 用于把 MiniMax 等外部 Provider 返回的临时音频转存到私有 COS，使 URL 可控、可续期。
+   */
+  putObject(objectKey: string, body: Buffer, contentType: string): Promise<void>;
 }

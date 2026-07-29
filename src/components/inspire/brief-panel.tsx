@@ -10,7 +10,6 @@
 'use client'
 
 import { useState } from 'react'
-import Image from 'next/image'
 import {
   Pencil,
   Check,
@@ -18,7 +17,6 @@ import {
   TriangleAlert,
   Layers,
   Save,
-  RefreshCw,
   Crown,
   GitCompare,
   ChevronDown,
@@ -28,6 +26,7 @@ import { cn } from '@/lib/utils'
 import {
   OUTPUT_TYPES,
   PROVIDERS,
+  coverFromTitle,
   type CreativeBrief,
   type DemoCandidate,
   type OutputType,
@@ -35,7 +34,7 @@ import {
 import { QUANTITIES, type Busy, type Phase } from './action-column'
 import { AudioPlayer } from './audio-player'
 import { Button } from '@/components/ui/button'
-import { Chip, ModeTag, RadioTags } from './ui'
+import { Chip, RadioTags } from './ui'
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={cn('animate-pulse rounded-md bg-muted', className)} />
@@ -114,6 +113,7 @@ function BriefSection({
   brief,
   collapsed,
   onToggle,
+  onBriefChange,
   outputType,
   onOutputChange,
   extraPrompt,
@@ -122,10 +122,13 @@ function BriefSection({
   onQuantityChange,
   onGenerate,
   busy,
+  canGenerate,
 }: {
   brief: CreativeBrief
   collapsed: boolean
   onToggle: () => void
+  /** 把 theme/priority 编辑写回 workspace 的 brief state，保证生成时 PATCH 带上最新值。 */
+  onBriefChange: (field: 'theme' | 'priority', value: string) => void
   outputType: OutputType
   onOutputChange: (value: OutputType) => void
   extraPrompt: string
@@ -134,10 +137,12 @@ function BriefSection({
   onQuantityChange: (value: number) => void
   onGenerate: () => void
   busy: Busy
+  /** 是否满足生成 Demo 的前置条件（真实简报 briefId + 歌词）。P0-2。 */
+  canGenerate: boolean
 }) {
   const [editing, setEditing] = useState(false)
-  const [theme, setTheme] = useState(brief.theme)
-  const [priority, setPriority] = useState(brief.priority)
+  // theme/priority 直接以 brief 为唯一数据源（受控），编辑 onChange 即写回 workspace，
+  // 不再持有会被丢弃的本地 state。
   const outputName = OUTPUT_TYPES.find((o) => o.id === outputType)!
 
   return (
@@ -159,12 +164,12 @@ function BriefSection({
           </p>
           {editing ? (
             <input
-              value={theme}
-              onChange={(e) => setTheme(e.target.value)}
+              value={brief.theme}
+              onChange={(e) => onBriefChange('theme', e.target.value)}
               className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
             />
           ) : (
-            <p className="text-sm font-medium text-foreground">{theme}</p>
+            <p className="text-sm font-medium text-foreground">{brief.theme}</p>
           )}
         </div>
 
@@ -236,13 +241,13 @@ function BriefSection({
           <p className="mt-2 text-[11px] text-muted-foreground">优先策略</p>
           {editing ? (
             <textarea
-              value={priority}
-              onChange={(e) => setPriority(e.target.value)}
+              value={brief.priority}
+              onChange={(e) => onBriefChange('priority', e.target.value)}
               rows={2}
               className="mt-1 w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 text-xs outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
             />
           ) : (
-            <p className="mt-0.5 text-xs text-foreground">{priority}</p>
+            <p className="mt-0.5 text-xs text-foreground">{brief.priority}</p>
           )}
         </div>
 
@@ -285,7 +290,7 @@ function BriefSection({
           {editing ? <Check className="size-3.5" /> : <Pencil className="size-3.5" />}
           {editing ? '完成' : '编辑'}
         </Button>
-        <Button type="button" size="sm" onClick={onGenerate} disabled={!!busy}>
+        <Button type="button" size="sm" onClick={onGenerate} disabled={!!busy || !canGenerate} title={canGenerate ? undefined : '请先生成简报并确认歌词'}>
           <Sparkles className="size-3.5" />
           {busy === 'generate' ? '生成中…' : '生成'}
         </Button>
@@ -294,13 +299,42 @@ function BriefSection({
   )
 }
 
+/**
+ * 封面占位（诚实展示）。MiniMax 不返回封面，用标题首字母 + id hash 色块代替假图。
+ */
+function CoverPlaceholder({
+  title,
+  id,
+  className,
+  letterClassName,
+}: {
+  title: string
+  id: string
+  className?: string
+  letterClassName?: string
+}) {
+  const { letter, colorClass } = coverFromTitle(title, id)
+  return (
+    <div className={cn('flex items-center justify-center bg-muted', className)}>
+      <div className={cn('flex size-full items-center justify-center text-white', colorClass)}>
+        <span className={cn('font-semibold leading-none', letterClassName)}>{letter}</span>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 极简候选卡片（任务5）：仅封面占位 / 标题 / 主版本标记 / 时长 / 真实模拟标识。
+ * 移除播放进度条、波形、内联播放控件、BPM/调性、创作说明、设为主版本/重生成按钮。
+ * 整张卡片为「入口」：点击打开右侧详情栏（SongDetailSheet）承载播放/歌词/全屏。
+ * 选择复选框保留，服务于底部批量「保存为版本」（与播放控件无关）。
+ */
 function CandidateCard({
   c,
   isMain,
   saved,
   selected,
   onToggleSelected,
-  onSetMain,
   onOpenDetail,
 }: {
   c: DemoCandidate
@@ -308,109 +342,81 @@ function CandidateCard({
   saved: boolean
   selected: boolean
   onToggleSelected: () => void
-  onSetMain: () => void
   onOpenDetail: () => void
 }) {
-  const provider = PROVIDERS.find((p) => p.id === c.providerId)!
-  const output = OUTPUT_TYPES.find((o) => o.id === c.outputType)!
   return (
     <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpenDetail}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpenDetail()
+        }
+      }}
+      title="查看详情"
       className={cn(
-        'rounded-xl border bg-card p-3 transition-colors',
-        selected ? 'border-brand/60 ring-1 ring-brand/20' : isMain ? 'border-brand/40 ring-1 ring-brand/20' : 'border-border',
+        'group flex cursor-pointer items-center gap-3 rounded-xl border bg-card p-3 text-left transition-colors',
+        selected
+          ? 'border-brand/60 ring-1 ring-brand/20'
+          : isMain
+            ? 'border-brand/40 ring-1 ring-brand/20 hover:border-brand/60'
+            : 'border-border hover:border-brand/40',
       )}
     >
-      <div className="flex gap-3">
-        <div className="relative size-16 shrink-0 overflow-hidden rounded-lg border border-border">
-          <Image src={c.cover} alt={c.title} fill className="object-cover" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <button
-                type="button"
-                role="checkbox"
-                aria-checked={selected}
-                aria-label={selected ? '取消选择该候选' : '选择该候选'}
-                onClick={onToggleSelected}
-                className={cn(
-                  'flex size-4 shrink-0 items-center justify-center rounded border transition-colors',
-                  selected ? 'border-brand bg-brand text-brand-foreground' : 'border-border bg-background hover:bg-muted',
-                )}
-              >
-                {selected && <Check className="size-3" />}
-              </button>
-              <button
-                type="button"
-                onClick={onOpenDetail}
-                title="查看详情"
-                className="truncate text-left text-sm font-medium text-foreground transition-colors hover:text-brand"
-              >
-                {c.title}
-              </button>
-            </div>
-            {isMain && (
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-brand-muted px-1.5 py-0.5 text-[11px] font-medium text-brand">
-                <Crown className="size-3" />
-                主版本
-              </span>
-            )}
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-foreground">
-              {output.label}
-            </span>
-            <ModeTag mode={c.mode} />
-            <span
-              className={cn(
-                'rounded px-1.5 py-0.5 text-[11px] font-medium',
-                saved ? 'bg-success/10 text-success-foreground' : 'bg-warning/10 text-warning-foreground',
-              )}
-            >
-              {saved ? '已保存' : '未保存'}
-            </span>
-            <span className="text-[11px] text-muted-foreground">
-              {provider.name}
-            </span>
-          </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            {c.bpm} BPM · {c.key} · {c.duration}
-          </p>
-        </div>
-      </div>
+      {/* 封面占位：标题首字母 + hash 色块（诚实展示，无假封面图） */}
+      <CoverPlaceholder
+        title={c.title}
+        id={c.id}
+        className="size-12 shrink-0 overflow-hidden rounded-lg border border-border"
+        letterClassName="text-lg"
+      />
 
-      <p className="mt-2.5 text-xs text-muted-foreground">{c.descriptor}</p>
-
-      <div className="mt-3">
-        {c.audioUrl ? <audio controls preload="metadata" src={c.audioUrl} className="h-9 w-full" aria-label={`${c.title} 播放器`} /> : <AudioPlayer durationLabel={c.duration} seed={c.id.charCodeAt(1)} bars={40} />}
-      </div>
-
-      <div className="mt-3 flex gap-2">
-        <button
-          onClick={onSetMain}
-          disabled={isMain}
-          className={cn(
-            'flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium transition-colors',
-            isMain
-              ? 'cursor-default bg-muted text-muted-foreground'
-              : 'bg-primary text-primary-foreground hover:bg-primary/90',
+      <div className="min-w-0 flex-1">
+        {/* 标题 + 主版本标记 */}
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm font-medium text-foreground">{c.title}</span>
+          {isMain && (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-brand-muted px-1.5 py-0.5 text-[10px] font-medium text-brand">
+              <Crown className="size-2.5" />
+              主版本
+            </span>
           )}
-        >
-          <Crown className="size-3.5" />
-          {isMain ? '当前主版本' : '设为主版本'}
-        </button>
-        <button
-          onClick={onOpenDetail}
-          className="flex items-center justify-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-        >
-          <Layers className="size-3.5" />
-          详情
-        </button>
-        <button className="flex items-center justify-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted">
-          <RefreshCw className="size-3.5" />
-          从此版本重生成
-        </button>
+        </div>
+        {/* 时长 + 保存状态 */}
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-muted-foreground">{c.duration}</span>
+          <span
+            className={cn(
+              'rounded px-1.5 py-0.5 text-[11px] font-medium',
+              saved ? 'bg-success/10 text-success-foreground' : 'bg-warning/10 text-warning-foreground',
+            )}
+          >
+            {saved ? '已保存' : '未保存'}
+          </span>
+        </div>
       </div>
+
+      {/* 批量选择复选框：stopPropagation 避免触发展开详情 */}
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={selected}
+        aria-label={selected ? '取消选择该候选' : '选择该候选'}
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggleSelected()
+        }}
+        className={cn(
+          'flex size-4 shrink-0 items-center justify-center rounded border transition-colors',
+          selected
+            ? 'border-brand bg-brand text-brand-foreground'
+            : 'border-border bg-background hover:bg-muted',
+        )}
+      >
+        {selected && <Check className="size-3" />}
+      </button>
     </div>
   )
 }
@@ -432,20 +438,18 @@ function CompareColumn({
         isMain ? 'border-brand/40 ring-1 ring-brand/20' : 'border-border',
       )}
     >
-      <div className="relative aspect-square w-full overflow-hidden rounded-lg border border-border">
-        <Image src={c.cover} alt={c.title} fill className="object-cover" />
-      </div>
+      <CoverPlaceholder
+        title={c.title}
+        id={c.id}
+        className="aspect-square w-full overflow-hidden rounded-lg border border-border"
+        letterClassName="text-3xl"
+      />
       <h4 className="mt-2 truncate text-xs font-medium text-foreground">
         {c.title}
       </h4>
-      <div className="mt-1 flex items-center gap-1">
-        <ModeTag mode={c.mode} />
-      </div>
       <dl className="mt-2 space-y-1 text-[11px]">
         {[
           ['类型', output.label],
-          ['BPM', String(c.bpm)],
-          ['调性', c.key],
           ['时长', c.duration],
         ].map(([k, v]) => (
           <div key={k} className="flex justify-between">
@@ -483,6 +487,8 @@ function ResultsSection({
   onSetMain,
   onOpenDetail,
   onSaveVersion,
+  selectedIds,
+  onSelectedIdsChange,
 }: {
   busy: Busy
   quantity: number
@@ -492,13 +498,15 @@ function ResultsSection({
   onSetMain: (id: string) => void
   onOpenDetail: (id: string) => void
   onSaveVersion: (candidateIds: string[]) => void
+  /** 选中的候选 id（由 workspace 提升，切换 tab/折叠不丢失）。 */
+  selectedIds: string[]
+  onSelectedIdsChange: (ids: string[]) => void
 }) {
   const [collapsed, setCollapsed] = useState(false)
   const [compare, setCompare] = useState(false)
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
 
   function toggleSelected(id: string) {
-    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]))
+    onSelectedIdsChange(selectedIds.includes(id) ? selectedIds.filter((item) => item !== id) : [...selectedIds, id])
   }
   const selectable = candidates.filter((c) => !savedCandidateIds.includes(c.id))
   const selectedCount = selectable.filter((c) => selectedIds.includes(c.id)).length
@@ -571,7 +579,6 @@ function ResultsSection({
                 saved={savedCandidateIds.includes(c.id)}
                 selected={selectedIds.includes(c.id)}
                 onToggleSelected={() => toggleSelected(c.id)}
-                onSetMain={() => onSetMain(c.id)}
                 onOpenDetail={() => onOpenDetail(c.id)}
               />
             ))}
@@ -587,7 +594,7 @@ function ResultsSection({
             {selectedCount > 0 && (
               <button
                 type="button"
-                onClick={() => setSelectedIds([])}
+                onClick={() => onSelectedIdsChange([])}
                 className="rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
                 清空
@@ -601,7 +608,7 @@ function ResultsSection({
             onClick={() => {
               const ids = selectable.filter((c) => selectedIds.includes(c.id)).map((c) => c.id)
               onSaveVersion(ids)
-              setSelectedIds([])
+              onSelectedIdsChange([])
             }}
           >
             <Save className="size-3.5" />
@@ -617,6 +624,7 @@ export function BriefPanel({
   phase,
   busy,
   brief,
+  onBriefChange,
   outputType,
   onOutputChange,
   extraPrompt,
@@ -630,10 +638,15 @@ export function BriefPanel({
   onSetMain,
   onOpenDetail,
   onSaveVersion,
+  canGenerate,
+  selectedIds,
+  onSelectedIdsChange,
 }: {
   phase: Phase
   busy: Busy
   brief: CreativeBrief
+  /** 把 theme/priority 编辑写回 workspace 的 brief state。 */
+  onBriefChange: (field: 'theme' | 'priority', value: string) => void
   outputType: OutputType
   onOutputChange: (value: OutputType) => void
   extraPrompt: string
@@ -647,6 +660,11 @@ export function BriefPanel({
   onSetMain: (id: string) => void
   onOpenDetail: (id: string) => void
   onSaveVersion: (candidateIds: string[]) => void
+  /** 是否满足生成 Demo 的前置条件（真实简报 briefId + 歌词）。P0-2。 */
+  canGenerate: boolean
+  /** 选中的候选 id（由 workspace 提升，切换 tab/折叠不丢失）。 */
+  selectedIds: string[]
+  onSelectedIdsChange: (ids: string[]) => void
 }) {
   const [briefCollapsed, setBriefCollapsed] = useState(false)
   const resultsReady = phase === 'results'
@@ -703,6 +721,7 @@ export function BriefPanel({
         brief={brief}
         collapsed={briefCollapsed}
         onToggle={() => setBriefCollapsed((v) => !v)}
+        onBriefChange={onBriefChange}
         outputType={outputType}
         onOutputChange={onOutputChange}
         extraPrompt={extraPrompt}
@@ -711,6 +730,7 @@ export function BriefPanel({
         onQuantityChange={onQuantityChange}
         onGenerate={onGenerate}
         busy={busy}
+        canGenerate={canGenerate}
       />
       {resultsReady && (
         <ResultsSection
@@ -722,6 +742,8 @@ export function BriefPanel({
           onSetMain={onSetMain}
           onOpenDetail={onOpenDetail}
           onSaveVersion={onSaveVersion}
+          selectedIds={selectedIds}
+          onSelectedIdsChange={onSelectedIdsChange}
         />
       )}
     </div>

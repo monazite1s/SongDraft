@@ -1,34 +1,4 @@
 import { cn } from '@/lib/utils'
-import type { RunMode } from '@/lib/inspire-data'
-
-export function ModeTag({
-  mode,
-  className,
-}: {
-  mode: RunMode
-  className?: string
-}) {
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] font-medium leading-none',
-        mode === 'real'
-          ? 'border-success/30 bg-success/10 text-success-foreground'
-          : 'border-warning/30 bg-warning/10 text-warning-foreground',
-        className,
-      )}
-    >
-      <span
-        className={cn(
-          'size-1.5 rounded-full',
-          mode === 'real' ? 'bg-success' : 'bg-warning',
-        )}
-        aria-hidden
-      />
-      {mode === 'real' ? '真实生成' : '模拟输出'}
-    </span>
-  )
-}
 
 export function StatusDot({
   status,

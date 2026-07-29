@@ -1,5 +1,7 @@
 # SongDraft V5 细粒度实施 Todo
 
+> ⚠️ 本文件为 V5 设计蓝图，大部分已落地；上线前事实清单以 docs/todo.md 为准。
+
 > 依据：`docs/SPEC.md`（当前最新版本）与 2026-07-29 新增需求  
 > 适用范围：桌面 Web 完整流程、移动 H5 灵感记录与分享流程  
 > 当前技术栈：Next.js App Router、React 19、TypeScript、Tailwind CSS 4、Drizzle/PostgreSQL、Supabase Auth、腾讯 COS  

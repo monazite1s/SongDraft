@@ -1,5 +1,5 @@
 /**
- * 创作库 /works（docs/implementation-todo.md）。
+ * 歌曲库 /works（docs/implementation-todo.md）。
  * Server Component：读取 URL 查询参数作为初始筛选，交给客户端组件管理状态与请求。
  */
 import { Sidebar } from "@/components/inspire/sidebar";

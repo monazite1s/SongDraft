@@ -1,6 +1,6 @@
 /**
- * 项目详情页（/works/[projectId]）。
- * 层级：项目维度聚合 → 关联灵感 + 版本（歌曲）列表。
+ * 歌曲详情页（/works/[projectId]）。
+ * 层级：歌曲维度聚合 → 关联灵感 + 版本（Demo）列表。
  * Server Component 直接调 ProjectService；Tab 交互下沉到 client 子组件。
  */
 import { notFound } from "next/navigation";
@@ -35,7 +35,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
   const user = await requireCurrentUser();
   const { projectId } = await params;
 
-  // 项目详情聚合在页面层完成，避免 project-service ↔ inspiration-repository 循环 import。
+  // 歌曲详情聚合在页面层完成，避免 project-service ↔ inspiration-repository 循环 import。
   let project: Awaited<ReturnType<ProjectService["get"]>>;
   try {
     project = await new ProjectService().get(user.id, projectId);
@@ -63,10 +63,12 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
             </Button>
           </Link>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="gap-2" disabled title="分享能力即将上线">
-              <Share2 className="size-4" />
-              分享
-            </Button>
+            <Link href={`/create/${projectId}`}>
+              <Button variant="outline" size="sm" className="gap-2" title="在制作台中分享当前歌曲">
+                <Share2 className="size-4" />
+                分享
+              </Button>
+            </Link>
             <Link href={`/create/${projectId}`}>
               <Button size="sm" className="gap-2">
                 <Wand2 className="size-4" />
@@ -76,7 +78,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
           </div>
         </div>
 
-        {/* Project info */}
+        {/* Song info */}
         <div className="border-b border-border bg-background px-8 py-6">
           <div className="flex gap-5">
             <div className="flex size-16 shrink-0 items-center justify-center rounded-lg bg-brand text-xl font-semibold text-primary-foreground">
@@ -84,7 +86,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <h1 className="text-xl font-semibold text-foreground">{project.title || "未命名项目"}</h1>
+                <h1 className="text-xl font-semibold text-foreground">{project.title || "未命名歌曲"}</h1>
                 <Badge variant="secondary">{STATUS_LABEL[project.status]}</Badge>
               </div>
               {project.description ? (

@@ -71,6 +71,6 @@ export class MiniMaxMusicGenerator implements MusicGenerator {
 }
 
 export function getMusicGenerator(): MusicGenerator {
-  // MUSIC_PROVIDER_MODE=minimax + Key → 真实生成；否则透明 Mock，不冒充外部结果
+  // 配置 MINIMAX_API_KEY 且 MUSIC_PROVIDER_MODE=minimax 时调用官方 API；未配置时使用本地回退，不冒充外部模型结果。
   return process.env.NODE_ENV !== "test" && process.env.MINIMAX_API_KEY && process.env.MUSIC_PROVIDER_MODE !== "mock" ? new MiniMaxMusicGenerator() : new MockMusicGenerator();
 }

@@ -23,6 +23,8 @@ export interface ProjectRepository {
   ): Promise<ProjectListPage<ProjectListItem>>;
   findOwned(projectId: string, ownerId: string): Promise<ProjectDetail | null>;
   updateDraft(projectId: string, ownerId: string, input: UpdateProjectDraftInput): Promise<ProjectDetail | null>;
+  /** 软删除项目（设置 deletedAt；列表查询已 isNull(deletedAt) 过滤）。返回是否命中。 */
+  softDelete(projectId: string, ownerId: string): Promise<boolean>;
 }
 
 type ProjectRow = typeof projects.$inferSelect;
@@ -152,6 +154,12 @@ export class DrizzleProjectRepository implements ProjectRepository {
     await getDatabase().update(projects).set(values).where(and(eq(projects.id, projectId), eq(projects.ownerId, ownerId)));
     return this.findOwned(projectId, ownerId);
   }
+
+  async softDelete(projectId: string, ownerId: string): Promise<boolean> {
+    const now = new Date();
+    const result = await getDatabase().update(projects).set({ deletedAt: now, updatedAt: now }).where(and(eq(projects.id, projectId), eq(projects.ownerId, ownerId), isNull(projects.deletedAt))).returning({ id: projects.id });
+    return result.length > 0;
+  }
 }
 
 const songDraftProjectStore = globalThis as typeof globalThis & {
@@ -231,6 +239,15 @@ export class MockProjectRepository implements ProjectRepository {
     project.creativeContext = { ...project.creativeContext, ...(input.creativeContext ?? {}), ...(input.eventId !== undefined ? { eventId: input.eventId } : {}) };
     project.updatedAt = new Date().toISOString();
     return structuredClone(project);
+  }
+
+  async softDelete(projectId: string, ownerId: string): Promise<boolean> {
+    const project = memoryProjects.get(projectId);
+    if (!project || project.ownerId !== ownerId) return false;
+    // Mock 模式无持久化 deletedAt 列；直接从内存 store 移除即等价软删除，
+    // listPage / listPageWithCounts / findOwned 自然不再返回该项。
+    memoryProjects.delete(projectId);
+    return true;
   }
 }
 

@@ -31,7 +31,7 @@ export const PROVIDERS: Provider[] = [
     outputs: ['song'],
     mode: 'real',
     status: 'ready',
-    note: '当前真实歌曲生成通道；图片输入不会发送给音乐模型。',
+    note: '图片输入不会发送给音乐模型。',
     latency: '通常约 40–180s / 首条',
   },
   {
@@ -64,7 +64,7 @@ export const PROVIDERS: Provider[] = [
     outputs: ['soundtrack', 'song', 'melody'],
     mode: 'simulated',
     status: 'limited',
-    note: '当前为本地模拟输出，用于流程演示，结果不代表真实生成质量。',
+    note: '用于流程演示。',
     latency: '即时（模拟）',
   },
 ]
@@ -136,54 +136,82 @@ export const DEFAULT_PLAN: PlanStep[] = [
 export interface DemoCandidate {
   id: string
   title: string
-  cover: string
+  /**
+   * 封面图（可选）。MiniMax 不返回封面，真实候选不应携带假封面。
+   * 仅当存在真实来源（用户上传/外部图床）时才填充；否则留空，用 coverFromTitle 占位。
+   */
+  cover?: string
   outputType: OutputType
   providerId: string
   mode: RunMode
   duration: string
-  bpm: number
-  key: string
+  /**
+   * BPM（可选）。MiniMax 不返回 BPM，真实候选不应携带假值。
+   * 字段保留以兼容详情栏类型；无真实来源时留空，不再展示。
+   */
+  bpm?: number
+  /**
+   * 调性（可选）。MiniMax 不返回调性，真实候选不应携带假值。
+   * 字段保留以兼容详情栏类型；无真实来源时留空，不再展示。
+   */
+  key?: string
   isMain?: boolean
   descriptor: string
   audioUrl?: string
+}
+
+/**
+ * 封面配色（与 sidebar colorForId 同源，确保全站视觉一致）。
+ */
+const COVER_BG_CLASSES = ['bg-brand', 'bg-chart-2', 'bg-chart-3', 'bg-chart-4', 'bg-chart-5']
+
+/**
+ * 由标题首字符 + id hash 确定性生成诚实占位封面。
+ *
+ * MiniMax 不返回封面图，DEMO_CANDIDATES 里的假封面不再使用。改用「首字母 + hash 色块」
+ * 作为诚实的「无封面」占位（参考 sidebar colorForId 配色与歌曲详情页 coverLetter 做法）。
+ *
+ * @param title 候选标题（取首字符作为占位字母）
+ * @param id    候选 id（hash 后决定背景色）
+ * @returns letter 占位字母；colorClass 背景色 class（如 'bg-brand'）
+ */
+export function coverFromTitle(title: string, id: string): { letter: string; colorClass: string } {
+  const letter = (title || '?').trim().charAt(0).toUpperCase() || '?'
+  let hash = 0
+  for (let i = 0; i < id.length; i += 1) {
+    hash = (hash * 31 + id.charCodeAt(i)) >>> 0
+  }
+  const colorClass = COVER_BG_CLASSES[hash % COVER_BG_CLASSES.length]!
+  return { letter, colorClass }
 }
 
 export const DEMO_CANDIDATES: DemoCandidate[] = [
   {
     id: 'c1',
     title: '雨夜街角 · 候选 A',
-    cover: '/covers/cover-dusk.png',
     outputType: 'song',
     providerId: 'aurora',
     mode: 'real',
     duration: '1:48',
-    bpm: 84,
-    key: 'A minor',
     isMain: true,
     descriptor: '电钢开场，副歌加入 Pad 与拨弦，情绪更饱满。',
   },
   {
     id: 'c2',
     title: '雨夜街角 · 候选 B',
-    cover: '/covers/cover-neon-rain.png',
     outputType: 'song',
     providerId: 'aurora',
     mode: 'real',
     duration: '1:52',
-    bpm: 86,
-    key: 'A minor',
     descriptor: '节奏更克制，保留更多留白，人声更靠前。',
   },
   {
     id: 'c3',
     title: '雨夜街角 · 旋律草图',
-    cover: '/covers/cover-paper.png',
     outputType: 'melody',
     providerId: 'cadence',
     mode: 'simulated',
     duration: '0:42',
-    bpm: 84,
-    key: 'A minor',
     descriptor: '仅主旋律与和声走向，用于确认副歌动机方向。',
   },
 ]

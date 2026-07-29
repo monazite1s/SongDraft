@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * 创作库内新建项目弹窗。
- * 独立于制作台 `/create` 引导：只填名称 → POST /api/projects → 进入项目详情。
+ * 歌曲库内新建歌曲弹窗。
+ * 独立于制作台 `/create` 引导：只填名称 → POST /api/projects → 进入歌曲详情。
  */
 import { useEffect, useState } from "react";
 import { FolderPlus, Loader2, X } from "lucide-react";
@@ -27,11 +27,19 @@ export function CreateProjectDialog({
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
+  // 弹窗每次打开时重置表单：用渲染期调整 state（prevOpen 比对），避免 effect 内 setState。
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open) {
+      setTitle("");
+      setError("");
+      setCreating(false);
+    }
+  }
+
   useEffect(() => {
     if (!open) return;
-    setTitle("");
-    setError("");
-    setCreating(false);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -54,11 +62,11 @@ export function CreateProjectDialog({
       });
       const body = (await response.json()) as CreateEnvelope;
       if (!response.ok || !body.ok || !body.data?.id) {
-        throw new Error(body.error?.message || "创建项目失败");
+        throw new Error(body.error?.message || "创建歌曲失败");
       }
       onCreated(body.data.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "创建项目失败");
+      setError(err instanceof Error ? err.message : "创建歌曲失败");
     } finally {
       setCreating(false);
     }
@@ -72,7 +80,7 @@ export function CreateProjectDialog({
           <div className="flex items-center gap-2">
             <FolderPlus className="size-4 text-brand" />
             <h2 id="works-create-project-title" className="text-sm font-semibold text-foreground">
-              新建项目
+              新建歌曲
             </h2>
           </div>
           <button
@@ -87,13 +95,13 @@ export function CreateProjectDialog({
 
         <div className="space-y-3 px-5 py-4">
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-muted-foreground">项目名称</span>
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">歌曲名称</span>
             <input
               className={inputClass}
               value={title}
               autoFocus
               maxLength={80}
-              placeholder="为这个项目起个名字"
+              placeholder="为这首歌曲起个名字"
               onChange={(event) => setTitle(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") void handleCreate();

@@ -14,7 +14,6 @@ import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { OUTPUT_TYPES, PROVIDERS, type DemoCandidate } from '@/lib/inspire-data'
 import { AudioPlayer } from './audio-player'
-import { ModeTag } from './ui'
 import { Button } from '@/components/ui/button'
 
 function hashSeed(id: string): number {
@@ -99,7 +98,6 @@ export function SongDetailSheet({
                     v{data.versionNo}
                   </span>
                 )}
-                <ModeTag mode={c.mode} />
                 <span
                   className={cn(
                     'rounded px-1.5 py-0.5 text-[11px] font-medium',
@@ -110,7 +108,7 @@ export function SongDetailSheet({
                 </span>
               </div>
               <p className="mt-1 text-[11px] text-muted-foreground">
-                {c.bpm} BPM · {c.key} · {c.duration}
+                {c.duration}
               </p>
             </div>
           </div>
@@ -122,9 +120,6 @@ export function SongDetailSheet({
             ) : (
               <AudioPlayer durationLabel={c.duration} seed={hashSeed(c.id)} bars={40} />
             )}
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              {c.mode === 'real' ? '真实生成音频' : '模拟输出（未接入音乐模型）'}
-            </p>
           </div>
 
           {/* 元信息 */}
@@ -133,7 +128,6 @@ export function SongDetailSheet({
               ['类型', OUTPUT_TYPES.find((o) => o.id === c.outputType)?.label ?? '—'],
               ['提供方', PROVIDERS.find((p) => p.id === c.providerId)?.name ?? '—'],
               ['时长', c.duration],
-              ['调性', c.key],
             ].map(([k, v]) => (
               <div key={k} className="flex justify-between rounded-md border border-border bg-background px-2 py-1.5">
                 <dt className="text-muted-foreground">{k}</dt>

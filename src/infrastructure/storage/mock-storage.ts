@@ -55,6 +55,11 @@ export class MockObjectStorage implements ObjectStorage {
     ]);
   }
 
+  /** 契约要求：服务端直传（转存外部音频用）。复用本地文件落地实现。 */
+  async putObject(objectKey: string, body: Buffer, contentType: string): Promise<void> {
+    await this.put(objectKey, contentType, new Uint8Array(body));
+  }
+
   async read(objectKey: string) {
     return readFile(this.resolve(objectKey));
   }

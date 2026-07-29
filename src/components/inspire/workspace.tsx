@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils'
 import type { ProjectDetail } from '@/modules/projects/project-types'
 import type { CreativeStreamEvent } from '@/modules/ai/lyric-assistant'
 import type { GenerationResult } from '@/modules/generation/generation-types'
-import { DRAFT_KEYS, loadClientDraft, saveClientDraft, clearClientDraft } from '@/lib/client-draft-store'
+import { DRAFT_KEYS, loadClientDraft, saveClientDraft, clearClientDraft, loadLastProject, saveLastProject, clearLastProject } from '@/lib/client-draft-store'
 import { Sidebar } from './sidebar'
 import { TopToolbar } from './top-toolbar'
 import { MaterialPanel, type MaterialDraft } from './material-panel'
@@ -26,6 +26,7 @@ import { BriefPanel } from './brief-panel'
 import { VersionModal } from './version-modal'
 import { ProviderModal } from './provider-modal'
 import { ShareModal } from './share-modal'
+import { ProjectSelectDialog } from './project-select-dialog'
 import { SongDetailSheet, type SongDetailSheetCandidate } from './song-detail-sheet'
 import {
   DEFAULT_BRIEF,
@@ -115,12 +116,36 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
   const [versionsOpen, setVersionsOpen] = useState(false)
   const [providersOpen, setProvidersOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  /** 任务6：项目切换弹窗（点击标题触发）。 */
+  const [projectSelectOpen, setProjectSelectOpen] = useState(false)
+  /** 任务6：首次进入 /create（无 projectId）时尝试恢复上次活跃项目，避免重复跳转。 */
+  const restoredProjectRef = useRef(false)
   /** 歌曲详情栏：选中的候选 id（SPEC §三.3，点击结果 Item 打开最右侧详情栏）。 */
   const [detailId, setDetailId] = useState<string | null>(null)
+  /** 任务3：批量保存版本时勾选的候选 id（提升到 workspace，切换 tab/折叠不丢失）。 */
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([])
   const savingRef = useRef(false)
 
   /** 有效歌词：有精修结果时优先用于生成 / 落库，原始输入框仍保留 draft.lyrics。 */
   const effectiveLyrics = refinedLyrics?.trim() ? refinedLyrics : draft.lyrics
+
+  /**
+   * 是否存在任一可生成内容（P0-1：生成简报按钮的启用条件）。
+   * 读 workspace 已提升的状态：歌词 / 创作提示 / 处理指令 / 封面。音频与图像文件由
+   * material-panel 本地持有，未提升；coverSet 作为「已上传并设为封面」的代理信号。
+   */
+  const hasAnyContent = Boolean(
+    draft.lyrics.trim()
+    || draft.creativePrompt.trim()
+    || draft.instruction.trim()
+    || refinedLyrics?.trim()
+    || coverSet,
+  )
+  /**
+   * 是否满足生成 Demo 前置条件（P0-2）：真实简报 briefId + 有效歌词。
+   * briefId 为空说明尚未生成简报；歌词为空无法生成 Demo。
+   */
+  const canGenerateDemo = Boolean(briefId) && effectiveLyrics.trim().length > 0
 
   // 仅写入外部存储，不在 effect 内 setState；跳过首次避免 SSR 空初值覆盖会话草稿。
   const skipPersist = useRef(true)
@@ -144,6 +169,76 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
       projectTitle,
     } satisfies WorkspaceSessionDraft)
   }, [projectId, draft, originalLyrics, refinedLyrics, selectedInputs, coverSet, quantity, extraPrompt, outputType, phase, brief, briefId, projectTitle])
+
+  /**
+   * 任务6：持久化「上次活跃项目」（lastProjectId），与草稿正交。
+   * 当存在有效 projectId 时写入 localStorage，供 /create 入口刷新/切回时恢复。
+   */
+  useEffect(() => {
+    if (projectId) saveLastProject(projectId, projectTitle)
+  }, [projectId, projectTitle])
+
+  /**
+   * 任务6：首次进入 /create（无 initialProject）时，若 lastProject 仍有效则 restore。
+   * - `?missing=1`：刚从失效 /create/[id] 重定向而来 → 清缓存、不恢复。
+   * - lastProject 先 HEAD/GET 校验；404 则清缓存，避免反复跳进死链。
+   */
+  useEffect(() => {
+    if (restoredProjectRef.current) return
+    if (projectId) {
+      restoredProjectRef.current = true
+      return
+    }
+    // 仅当「new」会话草稿存在实质内容（用户确实在 /create 自由创作过）时不强行恢复；
+    // 空草稿（仅因挂载/交互产生的默认值）不应阻断回到上次活跃项目。
+    const newDraft = loadClientDraft<WorkspaceSessionDraft>(DRAFT_KEYS.workspace(''))
+    const hasMeaningfulNewDraft = Boolean(
+      newDraft
+      && (
+        newDraft.draft.lyrics.trim()
+        || newDraft.draft.creativePrompt.trim()
+        || newDraft.draft.instruction.trim()
+        || newDraft.refinedLyrics?.trim()
+        || newDraft.coverSet
+      ),
+    )
+    if (hasMeaningfulNewDraft) {
+      restoredProjectRef.current = true
+      return
+    }
+
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('missing') === '1') {
+      clearLastProject()
+      restoredProjectRef.current = true
+      return
+    }
+
+    const last = loadLastProject()
+    if (!last) {
+      restoredProjectRef.current = true
+      return
+    }
+
+    let cancelled = false
+    fetch(`/api/projects/${last.id}`)
+      .then((res) => {
+        if (cancelled) return
+        if (res.ok) {
+          router.replace(`/create/${last.id}`)
+        } else {
+          clearLastProject()
+        }
+      })
+      .catch(() => {
+        if (!cancelled) clearLastProject()
+      })
+      .finally(() => {
+        if (!cancelled) restoredProjectRef.current = true
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, router])
 
   const candidates = useMemo(() => {
     if (!generatedCandidates.length) return []
@@ -170,8 +265,23 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
     if (saveState !== 'saving') setSaveState('dirty')
   }
 
+  /** 把 BriefSection 的 theme/priority 编辑写回 brief state（受控），生成时 PATCH 自动带上。 */
+  function updateBrief(field: 'theme' | 'priority', value: string) {
+    setBrief((prev) => ({ ...prev, [field]: value }))
+    markDirty()
+  }
+
   function updateDraft(next: MaterialDraft) {
     setDraft(next)
+    markDirty()
+  }
+
+  /** 应用历史版本后，把该版本歌词写回工作区（git checkout：切换到该版本内容）。 */
+  function applyRestoredLyrics(lyrics: string | null) {
+    const next = lyrics ?? ''
+    setDraft((d) => ({ ...d, lyrics: next }))
+    setOriginalLyrics(next)
+    setRefinedLyrics(null)
     markDirty()
   }
 
@@ -233,17 +343,19 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
     const body = await response.json() as ApiEnvelope<GenerationResult>
     if (!response.ok || !body.data) throw new Error(body.error?.message || '版本保存失败')
     const mapped = body.data.candidates.map((candidate, index) => {
-      const visual = DEMO_CANDIDATES[index % DEMO_CANDIDATES.length]!
+      // MiniMax 不返回封面/BPM/调性，只取 DEMO_CANDIDATES 的 outputType 作为输出类型模板，
+      // 不再继承假封面/假 BPM/假调性。封面由 coverFromTitle 程序化生成（见 brief-panel）。
+      const outputType = DEMO_CANDIDATES[index % DEMO_CANDIDATES.length]!.outputType
       const seconds = Math.max(1, Math.round(candidate.durationMs / 1000))
       return {
-        ...visual,
         id: candidate.id,
         title: candidate.title,
+        outputType,
         providerId: 'minimax',
         mode: candidate.executionKind === 'real_external' ? 'real' as const : 'simulated' as const,
         duration: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`,
         isMain: index === 0,
-        descriptor: candidate.executionKind === 'real_external' ? '由 MiniMax 根据当前歌词与创意简报真实生成。' : '当前未配置音乐模型，展示透明模拟 Demo。',
+        descriptor: '由 MiniMax 根据当前歌词与创意简报生成。',
         audioUrl: candidate.audioUrl ?? undefined,
       }
     })
@@ -343,6 +455,11 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
   /** 生成创意简报：确保项目存在 → POST /api/projects/[id]/brief → 写入真实简报。 */
   async function generateBrief() {
     if (busy) return
+    // P0-1 guard：无实质内容时直接拦截，避免空内容生成简报。
+    if (!hasAnyContent) {
+      setSaveError('请先添加歌词、哼唱或图像素材，再生成简报')
+      return
+    }
     setSaveError('')
     setBusy('analyze')
     try {
@@ -363,6 +480,11 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
   /** 生成 Demo：「生成」即确认当前简报，直接调用生成 API 创建候选。 */
   async function generateDemo() {
     if (busy) return
+    // P0-2 guard：必须有真实简报 briefId + 歌词才能生成 Demo。
+    if (!briefId || !effectiveLyrics.trim()) {
+      setSaveError(!briefId ? '请先生成创意简报' : '请提供歌词后再生成 Demo')
+      return
+    }
     setBusy('generate')
     setSaveError('')
     setSavedCandidateIds([])
@@ -434,6 +556,7 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
           onOpenVersions={() => setVersionsOpen(true)}
           onOpenShare={() => setShareOpen(true)}
           onManageProviders={() => setProvidersOpen(true)}
+          onOpenProjectSelect={() => setProjectSelectOpen(true)}
         />
         {/*
           等分栏：minmax(0,1fr) + 子项 min-w-0，避免内容 min-content 把某一栏撑宽。
@@ -464,7 +587,7 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
               footer={
                 <WorkspacePrimaryAction
                   busy={busy}
-                  selectedInputs={selectedInputs}
+                  hasAnyContent={hasAnyContent}
                   onPrimary={generateBrief}
                 />
               }
@@ -475,6 +598,7 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
               phase={phase}
               busy={busy}
               brief={brief}
+              onBriefChange={updateBrief}
               outputType={outputType}
               onOutputChange={(next) => { setOutputType(next); markDirty() }}
               extraPrompt={extraPrompt}
@@ -482,12 +606,15 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
               quantity={quantity}
               onQuantityChange={(next) => { setQuantity(next); markDirty() }}
               onGenerate={() => void generateDemo()}
+              canGenerate={canGenerateDemo}
               candidates={candidates}
               savedCandidateIds={savedCandidateIds}
               mainId={mainId}
               onSetMain={(id) => { setMainId(id); markDirty() }}
               onOpenDetail={(id) => setDetailId(id)}
               onSaveVersion={(ids) => void handleSaveVersion(ids)}
+              selectedIds={selectedCandidateIds}
+              onSelectedIdsChange={setSelectedCandidateIds}
             />
           </div>
           {detailId && (
@@ -501,9 +628,11 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
         </div>
       </div>
       {saveError && <div role="alert" className="fixed bottom-5 left-1/2 z-[80] -translate-x-1/2 rounded-lg bg-destructive px-4 py-2 text-sm text-white shadow-lg">{saveError}</div>}
-      <VersionModal open={versionsOpen} onClose={() => setVersionsOpen(false)} projectId={projectId} />
+      <VersionModal open={versionsOpen} onClose={() => setVersionsOpen(false)} projectId={projectId} onApplied={applyRestoredLyrics} />
       <ProviderModal open={providersOpen} onClose={() => setProvidersOpen(false)} current={provider} onSelect={setProvider} />
       <ShareModal open={shareOpen} onClose={() => setShareOpen(false)} />
+      {/* 任务6：点击项目标题切换/新建项目；ProjectSelectDialog 自带 router 跳转，无需回调。 */}
+      <ProjectSelectDialog open={projectSelectOpen} onClose={() => setProjectSelectOpen(false)} />
     </div>
   )
 }

@@ -45,6 +45,8 @@ export interface VersionView {
   audioUrl?: string | null
   restoredFromVersionId?: string | null
   parentId?: string | null
+  /** git 式展示标签（v1 / v2 / v1.1…），由后端按 parentId 拓扑计算。 */
+  label?: string
 }
 
 type ApiEnvelope<T> = { ok: boolean; data?: T; error?: { message?: string } }
@@ -81,7 +83,7 @@ function VersionNode({ data }: NodeProps) {
     >
       <Handle type="target" position={Position.Top} className="!size-2 !border-border !bg-border" />
       <div className="flex items-center gap-2">
-        <span className="text-sm font-semibold text-foreground">v{version.versionNo}</span>
+        <span className="text-sm font-semibold text-foreground">{version.label ?? `v${version.versionNo}`}</span>
         {version.isMain && (
           <span className="inline-flex items-center gap-1 rounded-full bg-brand px-1.5 py-0.5 text-[10px] font-medium text-brand-foreground">
             <Crown className="size-2.5" />
@@ -100,15 +102,12 @@ function VersionNode({ data }: NodeProps) {
           role="tooltip"
           className="pointer-events-none absolute left-full top-1/2 z-20 ml-3 w-60 -translate-y-1/2 rounded-lg border border-border bg-popover p-3 text-left shadow-lg"
         >
-          <p className="text-xs font-semibold text-foreground">v{version.versionNo} · {version.title}</p>
+          <p className="text-xs font-semibold text-foreground">{version.label ?? `v${version.versionNo}`} · {version.title}</p>
           <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{version.variation}</p>
           <div className="mt-1.5 flex items-center justify-between text-[10px] text-muted-foreground">
-            <span>{version.executionKind === 'real_external' ? '真实生成' : '模拟输出'}</span>
+            <span>{version.hasAudio ? '含音频' : '无音频'}</span>
             <span>{fmt(version.createdAt)}</span>
           </div>
-          {version.restoredFromVersionId && (
-            <p className="mt-1 text-[10px] text-muted-foreground/80">恢复自历史版本</p>
-          )}
         </div>
       )}
     </div>
@@ -117,7 +116,7 @@ function VersionNode({ data }: NodeProps) {
 
 const nodeTypes = { version: VersionNode }
 
-function VersionTree({ projectId }: { projectId: string }) {
+function VersionTree({ projectId, open, onApplied }: { projectId: string; open: boolean; onApplied?: (lyrics: string | null) => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [versions, setVersions] = useState<VersionView[]>([])
   const [loading, setLoading] = useState(true)
@@ -126,6 +125,11 @@ function VersionTree({ projectId }: { projectId: string }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const reload = useCallback(async () => {
+    if (!projectId) {
+      setVersions([])
+      setLoading(false)
+      return
+    }
     setLoading(true)
     setError('')
     try {
@@ -140,24 +144,58 @@ function VersionTree({ projectId }: { projectId: string }) {
     }
   }, [projectId])
 
+  // 每次弹窗打开（open 由 false→true）都重新拉取版本树，确保保存版本后立即可见。
+  // Modal 关闭会卸载 VersionTree，但显式以 open 为依赖避免后续 Modal 改为常驻时失效。
   // 数据获取的 loading 态在 effect 内同步设置是合规用法（非派生 state）。
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void reload() }, [reload])
+  useEffect(() => { if (open) void reload() }, [open, reload])
 
   const { nodes, edges } = useMemo(() => {
-    // versions 默认 versionNo 降序（最新在前）；树形自上而下展示为最早在顶（升序）。
-    const ordered = [...versions].sort((a, b) => a.versionNo - b.versionNo)
-    const flowNodes: Node[] = ordered.map((version, index) => ({
+    // git 式树形布局：按 parentId 拓扑分层（深度→y），叶子按中序遍历分配 x，父节点居中于子节点之上。
+    // parentId 悬空（指向已删/不存在版本）的节点回退为根，消除游离节点。
+    const byId = new Map(versions.map((v) => [v.id, v]))
+    const childrenOf = new Map<string, VersionView[]>()
+    const roots: VersionView[] = []
+    for (const v of versions) {
+      const pid = v.parentId && byId.has(v.parentId) ? v.parentId : null
+      if (!pid) roots.push(v)
+      else {
+        const arr = childrenOf.get(pid) ?? []
+        arr.push(v)
+        childrenOf.set(pid, arr)
+      }
+    }
+    const sortAsc = (a: VersionView, b: VersionView) => a.versionNo - b.versionNo
+    roots.sort(sortAsc)
+    childrenOf.forEach((arr) => arr.sort(sortAsc))
+    const X_GAP = NODE_WIDTH + 48
+    const positions = new Map<string, { x: number; y: number }>()
+    let leafCursor = 0
+    const assign = (node: VersionView, depth: number) => {
+      const kids = childrenOf.get(node.id) ?? []
+      if (kids.length === 0) {
+        positions.set(node.id, { x: leafCursor * X_GAP, y: TOP_MARGIN + depth * NODE_GAP_Y })
+        leafCursor += 1
+        return
+      }
+      kids.forEach((kid) => assign(kid, depth + 1))
+      const first = positions.get(kids[0]!.id)!
+      const last = positions.get(kids[kids.length - 1]!.id)!
+      positions.set(node.id, { x: (first.x + last.x) / 2, y: TOP_MARGIN + depth * NODE_GAP_Y })
+    }
+    roots.forEach((root) => assign(root, 0))
+
+    const flowNodes: Node[] = versions.map((version) => ({
       id: version.id,
       type: 'version',
-      position: { x: 0, y: TOP_MARGIN + index * NODE_GAP_Y },
+      position: positions.get(version.id) ?? { x: 0, y: 0 },
       data: { version, selected: selectedId === version.id } satisfies VersionNodeData,
       selectable: false,
       draggable: false,
     }))
     // 父子边：parentId 指向存在的版本时建边，保持版本树连通。
     const flowEdges: Edge[] = versions
-      .filter((v) => v.parentId && versions.some((p) => p.id === v.parentId))
+      .filter((v) => v.parentId && byId.has(v.parentId))
       .map((v) => ({
         id: `${v.parentId}-${v.id}`,
         source: v.parentId!,
@@ -194,12 +232,16 @@ function VersionTree({ projectId }: { projectId: string }) {
 
   async function handleRestore() {
     if (!selectedId) return
+    // 应用当前主版本（HEAD）无意义，直接拦截。
+    if (selected?.isMain) return
     setBusy(true)
     setError('')
     try {
       const r = await fetch(`/api/projects/${projectId}/versions/${selectedId}/restore`, { method: 'POST' })
-      const body = await r.json() as ApiEnvelope<VersionView>
+      const body = await r.json() as ApiEnvelope<VersionView & { lyrics: string | null }>
       if (!r.ok || !body.data) throw new Error(body.error?.message || '应用版本失败')
+      // 把历史版本歌词写回工作区（git checkout：切换到该版本内容）。
+      onApplied?.(body.data.lyrics)
       setSelectedId(null)
       await reload()
     } catch (e) {
@@ -254,7 +296,7 @@ function VersionTree({ projectId }: { projectId: string }) {
           <MousePointerClick className="size-3.5 shrink-0" />
           {selected ? (
             <span className="truncate">
-              已选择 <span className="font-medium text-foreground">v{selected.versionNo}</span> · {selected.title}
+              已选择 <span className="font-medium text-foreground">{selected.label ?? `v${selected.versionNo}`}</span> · {selected.title}
             </span>
           ) : (
             '点击版本节点选择，hover 查看详情'
@@ -270,7 +312,12 @@ function VersionTree({ projectId }: { projectId: string }) {
             <Trash2 className="size-3.5" />
             {confirmingDelete ? '再次点击确认删除' : '删除'}
           </Button>
-          <Button size="sm" disabled={!selectedId || busy} onClick={() => void handleRestore()}>
+          <Button
+            size="sm"
+            disabled={!selectedId || busy || Boolean(selected?.isMain)}
+            title={selected?.isMain ? '该版本已是当前主版本' : undefined}
+            onClick={() => void handleRestore()}
+          >
             <Check className="size-3.5" />
             应用
           </Button>
@@ -284,11 +331,16 @@ export function VersionModal({
   open,
   onClose,
   projectId,
+  onApplied,
 }: {
   open: boolean
   onClose: () => void
   projectId: string
+  /** 应用历史版本后，把该版本歌词写回工作区（git checkout）。 */
+  onApplied?: (lyrics: string | null) => void
 }) {
+  // Modal 关闭即卸载子组件（modal.tsx `if (!open) return null`）；
+  // 即便如此仍显式传 open，保证 VersionTree 在每次打开时重新拉取版本树。
   return (
     <Modal
       open={open}
@@ -298,7 +350,7 @@ export function VersionModal({
       className="max-w-2xl"
     >
       <ReactFlowProvider>
-        <VersionTree projectId={projectId} />
+        <VersionTree projectId={projectId} open={open} onApplied={onApplied} />
       </ReactFlowProvider>
     </Modal>
   )

@@ -13,8 +13,7 @@ export default async function RegisterPage({ searchParams }: { searchParams: Pro
       {error && <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {isMock ? (
         <form action={registerAction} className="mt-6">
-          <p className="mb-4 rounded-xl bg-indigo-50 p-3 text-sm text-indigo-700">本地演示模式已启用，无需注册真实账号。</p>
-          <button className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-medium text-white">进入演示工作台</button>
+          <button className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-medium text-white">进入工作台</button>
         </form>
       ) : (
         <>

@@ -41,6 +41,13 @@ export class ProjectService {
     return project;
   }
 
+  /** 软删除项目：先 findOwned 校验所有权（不存在→404），再 softDelete。 */
+  async delete(ownerId: string, projectId: string) {
+    const owned = await this.repository.findOwned(projectId, ownerId);
+    if (!owned) throw new DomainError("NOT_FOUND", 404, "项目不存在或无权访问");
+    await this.repository.softDelete(projectId, ownerId);
+  }
+
   /** 创作库：项目分页列表 + 灵感数/歌曲数（/api/works）。支持关键词与排序。 */
   async listWithCounts(
     ownerId: string,

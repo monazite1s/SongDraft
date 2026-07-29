@@ -33,3 +33,27 @@ test("creates a private mock link and accepts a guest comment", async () => {
   await service.revoke(owner, link.id);
   await expect(service.getPublic(link.token, owner)).rejects.toMatchObject({ code: "NOT_FOUND" });
 });
+
+test("owner posts a time-anchored comment on the song detail page without a share token", async () => {
+  const original = process.env.DATABASE_URL;
+  delete process.env.DATABASE_URL;
+  const project = await new ProjectService(new MockProjectRepository()).create(owner, { title: "夜航", description: "夜航灯", lyrics: "夜色里我们出发" });
+  const brief = await new BriefService().generate(owner, project.id);
+  const generation = await new GenerationService().generate(owner, { projectId: project.id, briefId: brief.id, lyrics: project.lyrics });
+  const { saved } = await new GenerationService().saveCandidates(owner, { projectId: project.id, candidateIds: [generation.candidates[0]!.id] });
+  const versionId = saved[0]!.id;
+  const service = new ShareService();
+  const comment = await service.ownerComment(owner, project.id, { versionId, content: "前奏再短一点", atMs: 3200 });
+  if (original) process.env.DATABASE_URL = original;
+  expect(comment.author).toBe("分享测试");
+  expect(comment.atMs).toBe(3200);
+  expect(comment.versionId).toBe(versionId);
+  expect(comment.read).toBe(true);
+  // ownerComment 应在 listComments 中可见（按 versionId 过滤）。
+  const listed = (await service.listComments(owner, project.id)).filter((c) => c.versionId === versionId);
+  expect(listed).toHaveLength(1);
+  expect(listed[0]!.atMs).toBe(3200);
+  // 校验失败：空内容 / 无效时间点。
+  await expect(service.ownerComment(owner, project.id, { versionId, content: "  ", atMs: 0 })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+  await expect(service.ownerComment(owner, project.id, { versionId, content: "ok", atMs: -1 })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+});

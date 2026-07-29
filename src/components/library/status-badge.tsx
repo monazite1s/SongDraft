@@ -1,6 +1,6 @@
 /**
  * 共享状态徽标（docs/implementation-todo.md §7 UI 重设计）。
- * 两库（创作库 / 灵感库）通用：克制语义色，圆角 pill，细边框，11px。
+ * 两库（歌曲库 / 灵感库）通用：克制语义色，圆角 pill，细边框，11px。
  *
  * variant 语义：
  * - success：已完成（ready）
@@ -41,7 +41,7 @@ export function StatusBadge({
   );
 }
 
-/** ProjectStatus → StatusVariant 映射（创作库）。 */
+/** ProjectStatus → StatusVariant 映射（歌曲库）。 */
 export function projectStatusVariant(status: string): StatusVariant {
   switch (status) {
     case "ready":

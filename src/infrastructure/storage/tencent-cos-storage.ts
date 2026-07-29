@@ -89,4 +89,14 @@ export class TencentCosStorage implements ObjectStorage {
       Key: objectKey,
     });
   }
+
+  async putObject(objectKey: string, body: Buffer, contentType: string): Promise<void> {
+    await this.cos.putObject({
+      Bucket: this.config.bucket,
+      Region: this.config.region,
+      Key: objectKey,
+      Body: body,
+      ContentType: contentType,
+    });
+  }
 }

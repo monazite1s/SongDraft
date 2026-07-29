@@ -23,7 +23,7 @@
 | 集成 | 当前状态 | 环境变量 | 接入验收 |
 |---|---|---|---|
 | Supabase Auth | SSR 代码完成 | `NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_ANON_KEY` | 注册、登录、退出、刷新 Session；生产禁用 Mock Auth |
-| PostgreSQL | Schema + 0000/0001 迁移完成 | `DATABASE_URL` | 迁移后重启仍能恢复项目、对话、版本和评论 |
+| PostgreSQL | Schema + 0000-0004 迁移完成 | `DATABASE_URL` | 迁移后重启仍能恢复项目、对话、版本和评论 |
 | 腾讯云 COS | 签名/Mock Storage 完成 | `STORAGE_DRIVER=cos`、`TENCENT_COS_*` | 音频直传、Head 校验、私有读取、越权失败、CORS |
 | DeepSeek | V4 Flash Adapter 已接入 | `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`TEXT_PROVIDER_MODE=deepseek` | 结构化响应、超时、错误脱敏已完成；Token 级 SSE 和成本记录待补 |
 | MiniMax | Music 2.6 Adapter 已接入 | `MINIMAX_API_KEY`、`MINIMAX_BASE_URL`、`MINIMAX_MUSIC_MODEL`、`MUSIC_PROVIDER_MODE=minimax` | 歌词生成歌曲、真实 URL 播放/分享/导出已完成；COS 转存与哼唱 Cover 待补 |
@@ -40,7 +40,7 @@
 ## 4. MiniMax 与 COS 后续增强
 
 1. 将 MiniMax 返回的 HTTPS 音频下载后转存 COS 私有对象，避免长期依赖 Provider URL。
-2. 哼唱通过短时 COS GET URL 接入 MiniMax Cover 预处理与歌词保留流程，禁止公开 Bucket。
+2. 哼唱通过短时 COS GET URL 接入 MiniMax Music Cover 预处理与歌词保留流程，禁止公开 Bucket。
 3. 保存 MiniMax trace ID、耗时和状态，但不保存请求密钥或完整日志。
 4. 转存后写入 DemoAsset 对象键、时长和 `real_external`。
 5. 播放/下载时签发短时 URL；不得把 Provider 原始长期 URL持久暴露给客户端。

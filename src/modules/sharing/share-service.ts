@@ -10,6 +10,7 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 
 import { getDatabase } from "@/infrastructure/db/client";
 import { comments, demoAssets, demoVersions, profiles, projects, shareAccessGrants, shareLinks } from "@/infrastructure/db/schema";
+import { resolveAudioUrl } from "@/infrastructure/storage/transfer";
 import type { AuthUser } from "@/modules/auth/types";
 import { getMockVersion } from "@/modules/generation/generation-service";
 import { getProjectRepository } from "@/modules/projects/project-repository";
@@ -80,9 +81,13 @@ export class ShareService {
     const [share] = await db.select({ id: shareLinks.id, projectId: shareLinks.projectId, ownerId: projects.ownerId, versionId: shareLinks.versionId, allowComments: shareLinks.allowComments, expiresAt: shareLinks.expiresAt, revokedAt: shareLinks.revokedAt, title: projects.title, description: projects.description, lyrics: projects.currentLyrics, artist: projects.artistSnapshot, versionNo: demoVersions.versionNo }).from(shareLinks).innerJoin(projects, eq(projects.id, shareLinks.projectId)).innerJoin(demoVersions, eq(demoVersions.id, shareLinks.versionId)).where(eq(shareLinks.tokenHash, tokenHash(token))).limit(1);
     if (!share) throw new DomainError("NOT_FOUND", 404, "分享链接不存在"); assertActive({ expiresAt: share.expiresAt?.toISOString() ?? null, revokedAt: share.revokedAt?.toISOString() ?? null });
     await this.ensureDbGrant(share.id, share.projectId, share.ownerId, user);
-    const [asset] = await db.select({ metadata: demoAssets.metadata, executionKind: demoAssets.executionKind }).from(demoAssets).where(eq(demoAssets.versionId, share.versionId)).limit(1);
+    const [asset] = await db.select({ metadata: demoAssets.metadata, objectKey: demoAssets.objectKey, executionKind: demoAssets.executionKind }).from(demoAssets).where(eq(demoAssets.versionId, share.versionId)).limit(1);
     const rows = await db.select({ id: comments.id, guestName: comments.guestName, content: comments.content, atMs: comments.atMs, createdAt: comments.createdAt }).from(comments).where(and(eq(comments.shareId, share.id), isNull(comments.deletedAt)));
-    return { title: share.title, description: share.description, lyrics: share.lyrics, artist: share.artist as unknown as ArtistProfile | null, author: "SongDraft 创作者", versionId: share.versionId, versionNo: share.versionNo, demoTitle: String(asset?.metadata.title || `${share.title} Demo`), hasAudio: Boolean(asset?.metadata.hasAudio), audioUrl: typeof asset?.metadata.audioUrl === "string" ? asset.metadata.audioUrl : null, executionKind: asset?.executionKind || "simulated", allowComments: share.allowComments, comments: rows.map((row) => ({ id: row.id, author: row.guestName || "SongDraft 用户", content: row.content, atMs: row.atMs, createdAt: row.createdAt.toISOString() })) };
+    // 解析签名播放 URL：有 COS objectKey/cosObjectKey → 短时签名；否则回退 asset 的 audioUrl。
+    const shareCosKey = typeof asset?.metadata.cosObjectKey === "string" ? asset.metadata.cosObjectKey : asset?.objectKey;
+    const shareFallback = typeof asset?.metadata.audioUrl === "string" ? asset.metadata.audioUrl : null;
+    const resolvedAudioUrl = await resolveAudioUrl(shareCosKey, shareFallback);
+    return { title: share.title, description: share.description, lyrics: share.lyrics, artist: share.artist as unknown as ArtistProfile | null, author: "SongDraft 创作者", versionId: share.versionId, versionNo: share.versionNo, demoTitle: String(asset?.metadata.title || `${share.title} Demo`), hasAudio: Boolean(asset?.metadata.hasAudio), audioUrl: resolvedAudioUrl, executionKind: asset?.executionKind || "simulated", allowComments: share.allowComments, comments: rows.map((row) => ({ id: row.id, author: row.guestName || "SongDraft 用户", content: row.content, atMs: row.atMs, createdAt: row.createdAt.toISOString() })) };
   }
 
   /**
@@ -164,6 +169,42 @@ export class ShareService {
     const db = getDatabase();
     const [comment] = await db.select({ id: comments.id }).from(comments).innerJoin(projects, eq(projects.id, comments.projectId)).where(and(eq(comments.id, commentId), eq(projects.ownerId, owner.id), isNull(comments.deletedAt))).limit(1);
     if (!comment) throw new DomainError("NOT_FOUND", 404, "评论不存在"); await db.update(comments).set({ deletedAt: new Date() }).where(eq(comments.id, commentId)); return { id: commentId, deleted: true };
+  }
+
+  /**
+   * Owner 在歌曲详情页（/works/[projectId]/v/[versionId]）按音频时间点发表评论。
+   * 与公开分享评论不同：不需要 share token；author 为 owner 自身；readAt 直接置为已读。
+   * 评论归属校验：项目属 owner + 版本属项目。
+   */
+  async ownerComment(owner: AuthUser, projectId: string, input: { versionId: string; content: string; atMs?: number | null }): Promise<OwnerCommentView> {
+    const content = input.content.trim();
+    if (!content || content.length > 1000) throw new DomainError("VALIDATION_FAILED", 422, "评论需为 1–1000 字");
+    const atMs = input.atMs ?? null;
+    if (atMs !== null && (!Number.isInteger(atMs) || atMs < 0)) throw new DomainError("VALIDATION_FAILED", 422, "时间点无效");
+    if (!process.env.DATABASE_URL) {
+      // Mock：校验版本属该项目所有者后，落内存 store（挂在一条占位 share 上便于 listComments 回读）。
+      const version = getMockVersion(input.versionId);
+      if (!version || version.ownerId !== owner.id || version.projectId !== projectId) throw new DomainError("NOT_FOUND", 404, "版本不存在或无权评论");
+      const now = new Date().toISOString();
+      const comment: OwnerCommentView = { id: crypto.randomUUID(), author: owner.displayName, content, atMs, createdAt: now, versionId: input.versionId, shareId: null, read: true };
+      // 复用 owner 的占位 share（若无则新建一条仅用于承载 owner 自评）。
+      let placeholder = [...mockShares.values()].find((s) => s.ownerId === owner.id && s.projectId === projectId && s.versionId === input.versionId);
+      if (!placeholder) {
+        const project = await getProjectRepository().findOwned(projectId, owner.id);
+        const token = freshToken();
+        placeholder = { id: crypto.randomUUID(), token, projectId, versionId: input.versionId, ownerId: owner.id, allowComments: true, expiresAt: null, revokedAt: null, public: { title: project?.title ?? "SongDraft", description: project?.description ?? null, lyrics: project?.lyrics ?? null, artist: project?.artist ?? null, author: owner.displayName, versionId: input.versionId, versionNo: version.versionNo, demoTitle: version.candidate.title, hasAudio: version.candidate.hasAudio, audioUrl: version.candidate.audioUrl ?? null, executionKind: version.candidate.executionKind, allowComments: true, comments: [] } };
+        mockShares.set(token, placeholder);
+      }
+      placeholder.public.comments.push({ id: comment.id, author: comment.author, content: comment.content, atMs: comment.atMs, createdAt: comment.createdAt });
+      return comment;
+    }
+    const db = getDatabase();
+    const [version] = await db.select({ id: demoVersions.id }).from(demoVersions).innerJoin(projects, eq(projects.id, demoVersions.projectId)).where(and(eq(demoVersions.id, input.versionId), eq(demoVersions.projectId, projectId), eq(projects.ownerId, owner.id))).limit(1);
+    if (!version) throw new DomainError("NOT_FOUND", 404, "版本不存在或无权评论");
+    const now = new Date();
+    const [comment] = await db.insert(comments).values({ projectId, versionId: input.versionId, shareId: null, authorUserId: owner.id, guestName: null, content, atMs, readAt: now }).returning();
+    if (!comment) throw new Error("Comment creation failed");
+    return { id: comment.id, versionId: comment.versionId, shareId: comment.shareId, author: owner.displayName, content: comment.content, atMs: comment.atMs, createdAt: comment.createdAt.toISOString(), read: Boolean(comment.readAt) };
   }
 
   async comment(token: string, input: { content: string; guestName?: string; atMs?: number | null }, user: AuthUser | null) {

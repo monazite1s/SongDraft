@@ -1,5 +1,5 @@
 /** 已有项目制作台：校验所有权后注入 initialProject。 */
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 
 import { Sidebar } from "@/components/inspire/sidebar";
 import { SongDraftWorkspace } from "@/components/inspire/workspace";
@@ -22,7 +22,12 @@ export default async function WorkspacePage({ params }: { params: Promise<{ proj
     );
   }
   let project;
-  try { project = await new ProjectService().get(user.id, projectId); }
-  catch { notFound(); }
+  try {
+    project = await new ProjectService().get(user.id, projectId);
+  } catch {
+    // 项目不存在 / 无权访问：回制作台入口，并带 missing=1 让客户端清掉失效的 lastProject，
+    // 避免侧栏「制作台」链到死链后再 404 死循环。
+    redirect("/create?missing=1");
+  }
   return <SongDraftWorkspace initialProject={project} />;
 }

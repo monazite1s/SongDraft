@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   Check,
   ChevronDown,
@@ -10,10 +11,11 @@ import {
   Share2,
   TriangleAlert,
   Copy,
-  Download,
   Trash2,
   History,
   LoaderCircle,
+  Loader2,
+  ChevronsUpDown,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -21,7 +23,7 @@ import {
   type InputKind,
   type Provider,
 } from '@/lib/inspire-data'
-import { ModeTag, StatusDot } from './ui'
+import { StatusDot } from './ui'
 
 const INPUT_LABELS: Record<InputKind, string> = {
   text: '歌词/文本',
@@ -71,6 +73,7 @@ export function TopToolbar({
   onOpenVersions,
   onOpenShare,
   onManageProviders,
+  onOpenProjectSelect,
 }: {
   provider: Provider
   onProviderChange: (p: Provider) => void
@@ -82,9 +85,80 @@ export function TopToolbar({
   onOpenVersions: () => void
   onOpenShare: () => void
   onManageProviders: () => void
+  /** 任务6：点击项目标题切换/新建项目，弹出 ProjectSelectDialog。 */
+  onOpenProjectSelect: () => void
 }) {
   const [providerOpen, setProviderOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
+
+  // 复制为新项目 / 删除项目：自包含，不向 workspace 加 prop。
+  // 用 usePathname 取 projectId，自行 fetch 项目详情完成克隆。
+  const router = useRouter()
+  const pathname = usePathname()
+  const projectIdFromPath = (() => {
+    const m = pathname?.match(/\/create\/([^/]+)/)
+    return m ? m[1] : null
+  })()
+  const [busy, setBusy] = useState<'clone' | 'delete' | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [menuError, setMenuError] = useState('')
+
+  async function handleClone() {
+    if (!projectIdFromPath) return
+    setBusy('clone')
+    setMenuError('')
+    try {
+      const res = await fetch(`/api/projects/${projectIdFromPath}`)
+      const body = (await res.json()) as { ok?: boolean; data?: { title?: string; description?: string | null; lyrics?: string | null } }
+      if (!res.ok || !body.ok || !body.data) throw new Error('读取项目失败')
+      const src = body.data
+      const createRes = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: `${src.title || '未命名项目'} 副本`,
+          description: src.description ?? undefined,
+          lyrics: src.lyrics ?? undefined,
+        }),
+      })
+      const createBody = (await createRes.json()) as { ok?: boolean; data?: { id?: string }; error?: { message?: string } }
+      if (!createRes.ok || !createBody.ok || !createBody.data?.id) throw new Error(createBody.error?.message || '克隆项目失败')
+      setMoreOpen(false)
+      router.push(`/create/${createBody.data.id}`)
+    } catch (e) {
+      setMenuError(e instanceof Error ? e.message : '克隆项目失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function handleDeleteProject() {
+    if (!projectIdFromPath) return
+    if (!confirmingDelete) {
+      setConfirmingDelete(true)
+      return
+    }
+    setBusy('delete')
+    setMenuError('')
+    try {
+      const res = await fetch(`/api/projects/${projectIdFromPath}`, { method: 'DELETE' })
+      const body = (await res.json()) as { ok?: boolean; error?: { message?: string } }
+      if (!res.ok || !body.ok) throw new Error(body.error?.message || '删除项目失败')
+      setMoreOpen(false)
+      router.push('/works')
+    } catch (e) {
+      setMenuError(e instanceof Error ? e.message : '删除项目失败')
+    } finally {
+      setBusy(null)
+      setConfirmingDelete(false)
+    }
+  }
+
+  function closeMore() {
+    setMoreOpen(false)
+    setConfirmingDelete(false)
+    setMenuError('')
+  }
 
   const unsupported = selectedInputs.filter((i) => !provider.supports.includes(i))
 
@@ -94,9 +168,16 @@ export function TopToolbar({
         <span className="size-2 rounded-sm bg-brand" aria-hidden />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="truncate text-sm font-semibold text-foreground">
-              {projectTitle}
-            </h1>
+            {/* 任务6：标题可点击，弹出 ProjectSelectDialog 切换/新建项目。 */}
+            <button
+              type="button"
+              onClick={onOpenProjectSelect}
+              title="切换或新建项目"
+              className="group flex min-w-0 items-center gap-1 rounded-md px-1 py-0.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted"
+            >
+              <span className="truncate">{projectTitle}</span>
+              <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+            </button>
             <button
               type="button"
               onClick={onSave}
@@ -155,7 +236,6 @@ export function TopToolbar({
                       <span className="text-sm font-medium text-foreground">
                         {p.name}
                       </span>
-                      <ModeTag mode={p.mode} />
                       {p.id === provider.id && (
                         <Check className="ml-auto size-4 text-brand" />
                       )}
@@ -227,32 +307,45 @@ export function TopToolbar({
           </button>
           <Popover
             open={moreOpen}
-            onClose={() => setMoreOpen(false)}
+            onClose={closeMore}
             align="end"
             className="w-52"
           >
-            {[
-              { icon: History, label: '版本历史', onClick: onOpenVersions },
-              { icon: Copy, label: '复制为新项目' },
-              { icon: Download, label: '导出简报 (PDF)' },
-            ].map((m) => (
-              <button
-                key={m.label}
-                onClick={() => {
-                  setMoreOpen(false)
-                  m.onClick?.()
-                }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-muted"
-              >
-                <m.icon className="size-4 text-muted-foreground" />
-                {m.label}
-              </button>
-            ))}
+            <button
+              onClick={() => {
+                setMoreOpen(false)
+                onOpenVersions()
+              }}
+              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-muted"
+            >
+              <History className="size-4 text-muted-foreground" />
+              版本历史
+            </button>
+            <button
+              onClick={() => void handleClone()}
+              disabled={!projectIdFromPath || busy !== null}
+              title={!projectIdFromPath ? '请先选择项目' : undefined}
+              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+            >
+              {busy === 'clone' ? <Loader2 className="size-4 animate-spin text-muted-foreground" /> : <Copy className="size-4 text-muted-foreground" />}
+              {busy === 'clone' ? '复制中…' : '复制为新项目'}
+            </button>
             <div className="mt-1 border-t border-border pt-1">
-              <button className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-destructive transition-colors hover:bg-destructive/10">
-                <Trash2 className="size-4" />
-                删除项目
+              <button
+                onClick={() => void handleDeleteProject()}
+                disabled={!projectIdFromPath || busy !== null}
+                title={!projectIdFromPath ? '请先选择项目' : undefined}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                  confirmingDelete
+                    ? 'text-destructive hover:bg-destructive/10'
+                    : 'text-destructive hover:bg-destructive/10',
+                )}
+              >
+                {busy === 'delete' ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                {busy === 'delete' ? '删除中…' : confirmingDelete ? '确认删除项目' : '删除项目'}
               </button>
+              {menuError ? <p role="alert" className="px-2 pt-1 text-[11px] leading-snug text-destructive">{menuError}</p> : null}
             </div>
           </Popover>
         </div>

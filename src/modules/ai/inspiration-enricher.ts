@@ -9,9 +9,7 @@
  */
 import "server-only";
 
-import { z } from "zod";
-
-import { buildInspirationEnrichSystemPrompt } from "@/modules/ai/prompts";
+import { PROMPT_REGISTRY, buildInspirationEnrichSystemPrompt, inspirationEnrichZodSchema } from "@/modules/ai/prompts";
 import type { InspirationSnapshot } from "@/modules/inspirations/inspiration-schema";
 import { DomainError } from "@/shared/errors/domain-error";
 
@@ -145,14 +143,6 @@ export class MockInspirationEnricher implements InspirationEnricher {
   }
 }
 
-const enrichSchema = z.object({
-  title: z.string().trim().max(60).nullable().default(null),
-  moods: z.array(z.string().trim().min(1).max(32)).max(11).nullable().default(null),
-  speedFeel: z.enum(["slow", "medium", "fast", "unknown"]).nullable().default(null),
-  soundHints: z.string().trim().max(500).nullable().default(null),
-  referenceWorks: z.string().trim().max(500).nullable().default(null),
-});
-
 /** DeepSeek：灵感已填字段 → 补全空缺字段 JSON（Zod 校验）。真实失败不冒充成功。 */
 export class DeepSeekInspirationEnricher implements InspirationEnricher {
   constructor(
@@ -163,6 +153,7 @@ export class DeepSeekInspirationEnricher implements InspirationEnricher {
 
   async enrich(snapshot: InspirationSnapshot): Promise<InspirationEnricherResult> {
     if (!this.apiKey) throw new DomainError("PROVIDER_NOT_CONFIGURED", 503, "DeepSeek 尚未配置");
+    const { temperature, maxTokens, responseFormat } = PROMPT_REGISTRY.inspirationEnrich.modelParams;
     const filled = extractFilledInput(snapshot);
     const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
@@ -171,9 +162,9 @@ export class DeepSeekInspirationEnricher implements InspirationEnricher {
       body: JSON.stringify({
         model: this.model,
         thinking: { type: "disabled" },
-        temperature: 0.5,
-        max_tokens: 1_200,
-        response_format: { type: "json_object" },
+        temperature,
+        max_tokens: maxTokens,
+        response_format: { type: responseFormat },
         messages: [
           { role: "system", content: buildInspirationEnrichSystemPrompt() },
           { role: "user", content: JSON.stringify({ primaryKind: snapshot.primaryKind, filled }) },
@@ -186,7 +177,8 @@ export class DeepSeekInspirationEnricher implements InspirationEnricher {
     if (!content) throw new DomainError("UPSTREAM_INVALID_RESPONSE", 502, "灵感补全服务返回内容无效");
     let parsed: unknown;
     try { parsed = JSON.parse(content); } catch { throw new DomainError("UPSTREAM_INVALID_RESPONSE", 502, "灵感补全服务返回内容无效"); }
-    const validated = enrichSchema.safeParse(parsed);
+    // schema 由 INSPIRATION_TAGS 组合（inspirationEnrichZodSchema）。
+    const validated = inspirationEnrichZodSchema.safeParse(parsed);
     if (!validated.success) throw new DomainError("UPSTREAM_INVALID_RESPONSE", 502, "灵感补全服务返回内容无效");
     const cleaned: InspirationEnrichment = {
       title: validated.data.title,

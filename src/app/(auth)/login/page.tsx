@@ -16,8 +16,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       {isMock ? (
         <form action={loginAction} className="mt-6">
           <input name="redirect" type="hidden" value={redirectField} />
-          <p className="mb-4 rounded-xl bg-indigo-50 p-3 text-sm text-indigo-700">本地演示模式已启用，无需配置或输入真实账号。</p>
-          <button className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-medium text-white">进入演示工作台</button>
+          <button className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-medium text-white">进入工作台</button>
         </form>
       ) : (
         <>

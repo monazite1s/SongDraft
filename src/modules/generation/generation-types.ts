@@ -37,7 +37,15 @@ export interface DemoVersionView {
   restoredFromVersionId?: string | null;
   /** 父版本 id（版本树父子关系）；null 表示根节点。 */
   parentId?: string | null;
+  /**
+   * 版本树展示标签（git 式）：主链 v1→v2→v3，从某节点分叉的分支为 vN.M。
+   * 由 parentId 拓扑计算，与扁平 versionNo 解耦。前端优先用 label 展示。
+   */
+  label?: string;
 }
+
+/** restore（应用历史版本）返回：版本视图 + 写回工作区的歌词快照。 */
+export type RestoreVersionResult = DemoVersionView & { lyrics: string | null };
 
 /** 将候选保存为正式版本的结果。 */
 export interface SaveCandidatesResult {

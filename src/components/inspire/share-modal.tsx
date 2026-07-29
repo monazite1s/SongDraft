@@ -44,12 +44,15 @@ function fmtDate(iso: string | null): string {
 export function ShareModal({
   open,
   onClose,
+  projectId: projectIdOverride,
 }: {
   open: boolean
   onClose: () => void
+  /** 显式传入 projectId，覆盖从路径推导（供非制作台页面复用，如歌曲详情页）。 */
+  projectId?: string
 }) {
   const pathname = usePathname()
-  const projectId = deriveProjectId(pathname)
+  const projectId = projectIdOverride ?? deriveProjectId(pathname)
 
   const [activeShare, setActiveShare] = useState<ShareView | null>(null)
   const [loadingShare, setLoadingShare] = useState(false)

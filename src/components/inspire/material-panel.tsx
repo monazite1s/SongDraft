@@ -177,10 +177,6 @@ function AudioTab() {
 
   return (
     <div className="space-y-4">
-      <Field label="旋律分析提示">
-        <input className={inputBase} placeholder="输入旋律分析提示" />
-      </Field>
-
       <div className="flex rounded-lg border border-border bg-background p-0.5">
         {(['record', 'upload'] as const).map((m) => (
           <button
@@ -235,11 +231,6 @@ function AudioTab() {
           <AudioPlayer durationLabel={file.durationLabel} seed={3} bars={44} />
         </div>
       )}
-
-      <button type="button" disabled={!file} className="flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40">
-        <Sparkles className="size-4 text-brand" />
-        分析旋律
-      </button>
     </div>
   )
 }
@@ -306,15 +297,6 @@ function ImageTab({
         {image ? '添加更多图像或视频' : '拖拽或点击上传图像 / 视频'}
         <input type="file" accept="image/*,video/*" className="sr-only" onChange={onFileChange} />
       </label>
-
-      <Field label="视觉分析提示">
-        <input className={inputBase} placeholder="输入视觉分析提示" />
-      </Field>
-
-      <button type="button" disabled={!image} className="flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40">
-        <Sparkles className="size-4 text-brand" />
-        分析画面
-      </button>
     </div>
   )
 }

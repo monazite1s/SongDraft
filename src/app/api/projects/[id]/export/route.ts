@@ -22,10 +22,10 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       const realAudio = await new GenerationService().getCurrentAudio(user, projectId);
       if (realAudio) return Response.redirect(realAudio.url, 307);
       const wav = createMockDemoWav();
-      return new Response(wav, { headers: { "content-type": "audio/wav", "content-disposition": `attachment; filename="${safeExportFilename(project.title)}-mock-demo.wav"`, "cache-control": "private, no-store", "x-songdraft-execution": "simulated" } });
+      return new Response(wav, { headers: { "content-type": "audio/wav", "content-disposition": `attachment; filename="${safeExportFilename(project.title)}-demo.wav"`, "cache-control": "private, no-store" } });
     }
     const [project, analyses, versions, shares] = await Promise.all([new ProjectService().get(user.id, projectId), new AnalysisService().list(user, projectId), new GenerationService().listVersions(user, projectId), new ShareService().list(user, projectId)]);
-    const packageData = { schemaVersion: "songdraft.creative-package.v1", exportedAt: new Date().toISOString(), executionDisclosure: "可能包含 simulated 结果；请以 executionKind 和 hasAudio 字段判断真实能力。", project, analyses, versions, shares };
+    const packageData = { schemaVersion: "songdraft.creative-package.v1", exportedAt: new Date().toISOString(), project, analyses, versions, shares };
     return new Response(JSON.stringify(packageData, null, 2), { headers: { "content-type": "application/json; charset=utf-8", "content-disposition": `attachment; filename="${safeExportFilename(project.title)}-songdraft.json"`, "cache-control": "private, no-store" } });
   } catch (error) { return apiError(error); }
 }

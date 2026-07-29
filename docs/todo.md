@@ -27,9 +27,10 @@
 - 原计划：`generateSchema` 加 confirmedBriefId，服务端从已确认 Brief 读三参数。
 - **完成状态**：`BriefPayload` 扩展承载 `outputType`/`extraPrompt`/`quantity`；`POST /api/generation-jobs` 改为只收 `projectId + briefId + idempotencyKey`，`GenerationService.generate` 从该简报读取全部参数（不再硬编码）；前端点「生成」时先把当前参数 PATCH 进简报再据此生成。注：简报沿用别名 `melody`，生成计划内部归一化为 canonical `melody_sketch`（完整重命名见 P2）。
 
-### #4 灵感库 — ⬜ 未开始
-- 现状/证据：`/inspirations` 路由+页面完全不存在；`InspirationRepository` 无 `listPage`；`GET /api/inspirations` 仅 POST。
-- 要做什么：`listPage(ownerId, 14 个筛选参数, pageSize≤50)` + 6 个端点（列表/详情/PATCH/DELETE/快照历史/快照恢复）+ 前端页（桌面 TanStack Table + H5 卡片）。
+### #4 灵感库 — ✅ 已完成（2026-07-30，Track A）
+- 原现状：`/inspirations` 路由+页面完全不存在；`InspirationRepository` 无 `listPage`；`GET /api/inspirations` 仅 POST。
+- 原计划：`listPage` + 6 个端点 + 前端页（桌面表格 + H5 卡片）。
+- **完成状态**：`InspirationRepository` 扩展 listPage/findDetail/updateMeta/softDelete/listVersions/restoreVersion（Drizzle+Mock，服务端筛选分页+项目名 JOIN）；`InspirationService` + 查询 zod schema；6 个端点（GET 列表/GET 详情/PATCH/DELETE/GET versions/POST restore）；`/inspirations` 页 + 查询表单（URL 同步、条件 Chips）+ 桌面表格/H5 卡片/分页/空状态 + 灵感详情 Sheet（480px、类型预览、版本时间线、恢复二次确认）；侧栏加「灵感库」。新增 4 个单测（筛选/分页/隔离/恢复不删历史/软删除）。
 
 ### #5 分享白名单 — ⬜ 未开始（安全硬伤）
 - 现状/证据：SPEC §7 核心要求未实现——任何拿到 token 的人都能无限访问（`share-service.ts:63` 只校验 token+评论开关+过期），无身份绑定/成员表/撤销。

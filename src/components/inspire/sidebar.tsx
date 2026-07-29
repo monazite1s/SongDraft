@@ -6,6 +6,7 @@ import {
   AudioLines,
   LayoutGrid,
   Lightbulb,
+  Library,
   FolderClosed,
   Cpu,
   Plus,
@@ -16,6 +17,7 @@ import { cn } from '@/lib/utils'
 const nav = [
   { icon: Lightbulb, label: '灵感记录', href: '/', match: (pathname: string) => pathname === '/' },
   { icon: LayoutGrid, label: '制作台', href: '/create', match: (pathname: string) => pathname === '/create' || pathname.startsWith('/create/') },
+  { icon: Library, label: '灵感库', href: '/inspirations', match: (pathname: string) => pathname === '/inspirations' || pathname.startsWith('/inspirations/') },
   { icon: FolderClosed, label: '创作库', href: '/works', match: (pathname: string) => pathname === '/works' || pathname.startsWith('/works/') },
   { icon: Cpu, label: '设置', href: '/settings', match: (pathname: string) => pathname === '/settings' || pathname.startsWith('/settings/') },
 ]

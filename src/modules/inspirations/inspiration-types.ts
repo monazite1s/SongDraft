@@ -30,3 +30,42 @@ export interface AutosaveResult {
   record: InspirationRecord;
   versionCreated: boolean;
 }
+
+/** 灵感库查询条件（docs/implementation-todo.md §8.5 子集）。 */
+export interface InspirationListFilters {
+  query?: string;
+  kinds?: InspirationPrimaryKind[];
+  attached?: "all" | "unattached" | "attached";
+  tags?: string[];
+  sort?: "updated" | "created";
+  page?: number;
+  pageSize?: number;
+}
+
+/** 灵感库列表项：只载列表所需字段，不加载完整 snapshot。 */
+export interface InspirationListItem {
+  id: string;
+  title: string | null;
+  primaryKind: InspirationPrimaryKind;
+  summary: string | null;
+  tags: string[];
+  projectId: string | null;
+  projectName: string | null;
+  versionCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InspirationListPage {
+  items: InspirationListItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface InspirationDetail {
+  record: InspirationRecord;
+  versions: InspirationRecordVersion[];
+}
+

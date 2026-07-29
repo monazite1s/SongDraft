@@ -7,6 +7,7 @@ import {
   type InspirationSnapshot,
 } from "./inspiration-schema";
 import { getInspirationRepository, type InspirationRepository } from "./inspiration-repository";
+import { inspirationListQuerySchema, inspirationMetaSchema, type InspirationListQuery } from "./inspiration-query";
 import { hashSnapshot, summarizeSnapshot } from "./snapshot";
 
 export class InspirationService {
@@ -15,6 +16,48 @@ export class InspirationService {
   async create(owner: AuthUser, input: unknown) {
     const { snapshot } = createInspirationRecordSchema.parse(input);
     return this.repository.create(owner, this.toSnapshotWrite(snapshot, "manual"));
+  }
+
+  /** 灵感库分页查询（服务端筛选/排序/分页）。 */
+  async list(ownerId: string, input: unknown) {
+    const filters = inspirationListQuerySchema.parse(input);
+    return this.repository.listPage(ownerId, filters satisfies InspirationListQuery);
+  }
+
+  /** 灵感详情：记录 + 版本历史。 */
+  async getDetail(ownerId: string, recordId: string) {
+    const detail = await this.repository.findDetail(recordId, ownerId);
+    if (!detail) throw new DomainError("NOT_FOUND", 404, "灵感记录不存在或无权访问");
+    return detail;
+  }
+
+  /** 更新标题等非版本化元信息。 */
+  async updateMeta(ownerId: string, recordId: string, input: unknown) {
+    const patch = inspirationMetaSchema.parse(input);
+    const updated = await this.repository.updateMeta(recordId, ownerId, patch);
+    if (!updated) throw new DomainError("NOT_FOUND", 404, "灵感记录不存在或无权访问");
+    return updated;
+  }
+
+  /** 软删除（已归档项目的素材不立即清理）。 */
+  async remove(ownerId: string, recordId: string) {
+    const ok = await this.repository.softDelete(recordId, ownerId);
+    if (!ok) throw new DomainError("NOT_FOUND", 404, "灵感记录不存在或无权访问");
+    return { id: recordId, deleted: true };
+  }
+
+  /** 版本时间线（只显真实变化快照，按版本号倒序）。 */
+  async listVersions(ownerId: string, recordId: string) {
+    const owned = await this.repository.findOwned(recordId, ownerId);
+    if (!owned) throw new DomainError("NOT_FOUND", 404, "灵感记录不存在或无权访问");
+    return this.repository.listVersions(recordId, ownerId);
+  }
+
+  /** 恢复历史快照：将记录当前内容指回目标快照，不删除后续历史。 */
+  async restoreVersion(ownerId: string, recordId: string, versionId: string) {
+    const restored = await this.repository.restoreVersion(recordId, ownerId, versionId);
+    if (!restored) throw new DomainError("NOT_FOUND", 404, "灵感记录或版本不存在");
+    return restored;
   }
 
   async autosave(ownerId: string, recordId: string, input: unknown) {

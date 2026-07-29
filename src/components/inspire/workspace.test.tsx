@@ -3,7 +3,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 const replace = vi.fn()
 
-vi.mock('next/navigation', () => ({ useRouter: () => ({ replace }) }))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ replace }), usePathname: () => '/' }))
 
 import { SongDraftWorkspace } from './workspace'
 

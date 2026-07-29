@@ -1,88 +1,250 @@
 /**
- * Demo 生成与版本流程（docs/SPEC.md 制作台；docs/technical-design.md §4）
+ * Demo 生成与版本流程（docs/SPEC.md 制作台 §7.4；docs/technical-design.md §4）
  *
- * generate：校验项目与歌词 → MusicGenerator → 写入 Brief/Job/Version/Asset，并设为主版本。
- * 另含 listVersions / setMain / restore。入口：POST /api/generation-jobs。
+ * 候选 / 版本拆分：
+ * - generate：校验项目与歌词 → MusicGenerator（按 quantity 批量，受控并发）→ 写入
+ *   Brief/Plan/Job/Candidate，返回「未保存候选」，不创建 demo_versions。
+ * - saveCandidates：将选中候选事务转为正式版本（demo_versions + demo_assets）并回填
+ *   savedVersionId，首个保存项设为主版本。
+ * - listVersions / setMain / restore：作用于已保存版本。
+ * 入口：POST /api/generation-jobs、POST /api/generation-candidates/save。
  */
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 
 import { getDatabase } from "@/infrastructure/db/client";
-import { creativeBriefs, demoAssets, demoVersions, generationJobs, generationPlans, projects } from "@/infrastructure/db/schema";
+import {
+  creativeBriefs,
+  demoAssets,
+  demoVersions,
+  generationCandidates,
+  generationJobs,
+  generationPlans,
+  projects,
+} from "@/infrastructure/db/schema";
 import type { AuthUser } from "@/modules/auth/types";
 import { getProjectRepository } from "@/modules/projects/project-repository";
 import { DomainError } from "@/shared/errors/domain-error";
-import type { DemoCandidate, DemoVersionView, GenerationResult } from "./generation-types";
-import { getMusicGenerator, type GeneratedDemo } from "./music-generator";
+import type { DemoCandidate, DemoVersionView, GenerationResult, SaveCandidatesResult } from "./generation-types";
+import { getMusicGenerator, type GeneratedDemo, type MusicGenerationInput } from "./music-generator";
 import { routeGeneration } from "./provider-router";
 import { buildMusicPrompt } from "@/modules/ai/prompts";
+import type { BriefPayload } from "@/modules/ai/brief-generator";
 
 const generateSchema = z.object({
   projectId: z.string().uuid(),
+  briefId: z.string().uuid(),
   lyrics: z.string().trim().min(1).max(10_000).optional(),
-  creativeContext: z.record(z.string(), z.unknown()).optional(),
   hummingAssetId: z.string().uuid().nullable().optional(),
   idempotencyKey: z.string().min(8).max(120).optional(),
-  brief: z.object({ theme: z.string().min(1), mood: z.string(), genre: z.string(), tempo: z.string() }).optional(),
+});
+
+/** 读取（mock）简报存储——由 BriefService 写入，生成时按 briefId 读取参数。 */
+const songDraftBriefStore = globalThis as typeof globalThis & { __songDraftBriefs?: Map<string, { projectId: string; payload: BriefPayload }> };
+
+function readBriefPayload(briefId: string, projectId: string): BriefPayload {
+  const brief = songDraftBriefStore.__songDraftBriefs?.get(briefId);
+  if (!brief || brief.projectId !== projectId) throw new DomainError("NOT_FOUND", 404, "简报不存在或无权访问");
+  return brief.payload;
+}
+
+const saveCandidatesSchema = z.object({
+  projectId: z.string().uuid(),
+  candidateIds: z.array(z.string().uuid()).min(1).max(20),
 });
 
 type MockVersionEntry = { projectId: string; ownerId: string; candidate: DemoCandidate; createdAt: string; isMain: boolean; versionNo: number; snapshot: Record<string, unknown> };
+type MockCandidateEntry = { projectId: string; ownerId: string; candidate: DemoCandidate; createdAt: string; savedVersionId: string | null };
 const songDraftGenerationStore = globalThis as typeof globalThis & {
   __songDraftGenerationResults?: Map<string, GenerationResult>;
   __songDraftVersionIndex?: Map<string, MockVersionEntry>;
+  __songDraftCandidates?: Map<string, MockCandidateEntry>;
 };
 const mockResults = songDraftGenerationStore.__songDraftGenerationResults ??= new Map<string, GenerationResult>();
 const mockVersionIndex = songDraftGenerationStore.__songDraftVersionIndex ??= new Map<string, MockVersionEntry>();
+const mockCandidates = songDraftGenerationStore.__songDraftCandidates ??= new Map<string, MockCandidateEntry>();
 
 export function getMockVersion(versionId: string) { return mockVersionIndex.get(versionId) ?? null; }
 
-function candidateFor(versionId: string, title: string, generated: GeneratedDemo = { audioUrl: null, durationMs: 12_000, executionKind: "simulated", providerLabel: "SongDraft Mock" }): DemoCandidate {
-  return { id: crypto.randomUUID(), versionId, title, variation: "应援合唱版", durationMs: generated.durationMs, executionKind: generated.executionKind, hasAudio: Boolean(generated.audioUrl), audioUrl: generated.audioUrl };
+function candidateLabel(theme: string, quantity: number, index: number) {
+  const suffix = quantity > 1 ? ` 候选 ${String.fromCharCode(65 + index)}` : "";
+  return `${theme}${suffix}`.trim();
+}
+
+function buildCandidate(id: string, title: string, generated: GeneratedDemo): DemoCandidate {
+  return { id, title, variation: "应援合唱版", durationMs: generated.durationMs, executionKind: generated.executionKind, hasAudio: Boolean(generated.audioUrl), audioUrl: generated.audioUrl, savedVersionId: null };
+}
+
+function toCandidateView(row: typeof generationCandidates.$inferSelect): DemoCandidate {
+  return {
+    id: row.id,
+    title: row.title,
+    variation: "应援合唱版",
+    durationMs: row.durationMs,
+    executionKind: row.executionKind,
+    hasAudio: Boolean(row.metadata?.hasAudio),
+    audioUrl: typeof row.audioUrl === "string" ? row.audioUrl : null,
+    savedVersionId: row.savedVersionId,
+  };
+}
+
+/** 受控并发（最多 2）执行批量生成，避免 Provider 拥塞。 */
+async function generateDemos(quantity: number, input: MusicGenerationInput): Promise<GeneratedDemo[]> {
+  const indices = Array.from({ length: quantity }, (_, i) => i);
+  const results = new Array<GeneratedDemo>(quantity);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < indices.length) {
+      const index = cursor++;
+      results[index] = await getMusicGenerator().create(input);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(2, quantity)) }, () => worker()));
+  return results;
 }
 
 export class GenerationService {
-  /** 生成一首 Demo 并落为线性新版本（幂等键可避免重复提交）。 */
+  /** 依据已确认简报（briefId）按 quantity 生成 N 条候选并落库（不创建正式版本）。 */
   async generate(owner: AuthUser, unknownInput: unknown): Promise<GenerationResult> {
     const input = generateSchema.parse(unknownInput);
     const project = await getProjectRepository().findOwned(input.projectId, owner.id);
     if (!project) throw new DomainError("NOT_FOUND", 404, "项目不存在或无权访问");
     const lyrics = input.lyrics ?? project.lyrics;
     if (!lyrics?.trim()) throw new DomainError("VALIDATION_FAILED", 422, "请先准备歌词");
-    const theme = input.brief?.theme ?? `${project.artist?.name ?? "SongDraft"}应援歌`;
     const idempotencyKey = input.idempotencyKey || crypto.randomUUID();
-    if (!process.env.DATABASE_URL) { const existing = mockResults.get(idempotencyKey); if (existing) return existing; }
-    // 调用 MiniMax/Mock；prompt 经 Prompt Registry 组装，Route Handler 不拼接系统文案
-    const generated = await getMusicGenerator().create({ projectId: project.id, lyrics, prompt: buildMusicPrompt({ theme, description: project.description, emotion: input.creativeContext?.emotion, genre: input.brief?.genre, tempo: input.brief?.tempo }), creativeContext: input.creativeContext ?? project.creativeContext, hummingAssetId: input.hummingAssetId });
+
+    // 从已确认简报读取主题、风格与生成参数（outputType/extraPrompt/quantity）。
+    const briefPayload = process.env.DATABASE_URL
+      ? await this.loadBriefPayload(input.briefId, input.projectId)
+      : readBriefPayload(input.briefId, input.projectId);
+    const theme = briefPayload.theme;
+    const quantity = briefPayload.quantity;
+    const musicInput: MusicGenerationInput = {
+      projectId: project.id,
+      lyrics,
+      prompt: buildMusicPrompt({ theme, description: project.description, emotion: briefPayload.mood.join("、"), genre: briefPayload.genre, tempo: briefPayload.tempo, extraPrompt: briefPayload.extraPrompt }),
+      creativeContext: project.creativeContext,
+      hummingAssetId: input.hummingAssetId,
+    };
+    // 音乐生成在事务外完成，避免长 HTTP 调用占用数据库事务。
+    const demos = await generateDemos(quantity, musicInput);
+
     if (!process.env.DATABASE_URL) {
-      const versionId = crypto.randomUUID();
-      const versionNo = [...mockVersionIndex.values()].filter((item) => item.projectId === project.id).length + 1;
-      const candidate = candidateFor(versionId, `${theme} · V${versionNo}`, generated);
-      mockVersionIndex.forEach((entry) => { if (entry.projectId === project.id) entry.isMain = false; });
-      mockVersionIndex.set(versionId, { projectId: project.id, ownerId: owner.id, candidate, createdAt: new Date().toISOString(), isMain: true, versionNo, snapshot: { lyrics, creativeContext: input.creativeContext ?? project.creativeContext } });
-      const result = { jobId: crypto.randomUUID(), status: "completed" as const, progress: 100, candidates: [candidate] };
-      mockResults.set(idempotencyKey, result); return result;
+      const existing = mockResults.get(idempotencyKey);
+      if (existing) return existing;
+      const now = new Date().toISOString();
+      const candidates: DemoCandidate[] = demos.map((demo, index) => buildCandidate(crypto.randomUUID(), candidateLabel(theme, quantity, index), demo));
+      candidates.forEach((candidate) => mockCandidates.set(candidate.id, { projectId: project.id, ownerId: owner.id, candidate, createdAt: now, savedVersionId: null }));
+      const result: GenerationResult = { jobId: crypto.randomUUID(), status: "completed", progress: 100, candidates };
+      mockResults.set(idempotencyKey, result);
+      return result;
     }
 
     const db = getDatabase();
     return db.transaction(async (tx) => {
-      const briefPayload = input.brief ?? { theme, mood: "温暖坚定", genre: "流行合唱", tempo: "中速", lyrics, ...input.creativeContext };
-      const [brief] = await tx.insert(creativeBriefs).values({ projectId: project.id, payload: briefPayload, confirmedAt: new Date(), createdBy: owner.id }).returning();
-      if (!brief) throw new Error("Brief creation failed");
-      const internalPlan = routeGeneration({ combination: project.combination, outputType: "song", brief: { theme, genre: String(briefPayload.genre), tempo: String(briefPayload.tempo) } });
-      const [plan] = await tx.insert(generationPlans).values({ projectId: project.id, briefId: brief.id, providerName: internalPlan.providerName, outputType: "song", combination: project.combination, steps: internalPlan.steps.map((step) => ({ title: step.title, executionKind: step.executionKind, detail: step.detail })), warnings: internalPlan.warnings, confirmedAt: new Date() }).returning();
+      // 简报用别名 melody，生成计划统一为 canonical melody_sketch（重命名记为 P0 todo）。
+      const routeOutputType = briefPayload.outputType === "melody" ? "melody_sketch" : briefPayload.outputType;
+      const internalPlan = routeGeneration({ combination: project.combination, outputType: routeOutputType, brief: { theme, genre: briefPayload.genre, tempo: briefPayload.tempo } });
+      const [plan] = await tx.insert(generationPlans).values({
+        projectId: project.id,
+        briefId: input.briefId,
+        providerName: internalPlan.providerName,
+        outputType: routeOutputType,
+        combination: project.combination,
+        steps: internalPlan.steps.map((step) => ({ title: step.title, executionKind: step.executionKind, detail: step.detail })),
+        warnings: internalPlan.warnings,
+      }).returning();
       if (!plan) throw new Error("Plan creation failed");
       const [job] = await tx.insert(generationJobs).values({ projectId: project.id, planId: plan.id, idempotencyKey, status: "completed", progress: 100, attempt: 1 }).onConflictDoNothing().returning();
       if (!job) throw new DomainError("CONFLICT", 409, "重复的生成请求正在处理");
-      const [last] = await tx.select({ versionNo: demoVersions.versionNo }).from(demoVersions).where(eq(demoVersions.projectId, project.id)).orderBy(desc(demoVersions.versionNo)).limit(1);
-      const versionNo = (last?.versionNo ?? 0) + 1;
-      await tx.update(demoVersions).set({ isMain: false }).where(eq(demoVersions.projectId, project.id));
-      const [version] = await tx.insert(demoVersions).values({ projectId: project.id, versionNo, snapshot: { lyrics, creativeContext: input.creativeContext ?? project.creativeContext, variation: "应援合唱版" }, isMain: true, createdBy: owner.id }).returning();
-      if (!version) throw new Error("Version creation failed");
-      const title = `${theme} · V${versionNo}`;
-      await tx.insert(demoAssets).values({ versionId: version.id, jobId: job.id, objectKey: generated.audioUrl ? `external://minimax/${version.id}` : `mock://demo/${version.id}`, durationMs: generated.durationMs, executionKind: generated.executionKind, metadata: { title, hasAudio: Boolean(generated.audioUrl), audioUrl: generated.audioUrl, providerLabel: generated.providerLabel } });
-      await tx.update(projects).set({ status: "ready", mainVersionId: version.id, currentLyrics: lyrics, updatedAt: new Date() }).where(eq(projects.id, project.id));
-      return { jobId: job.id, status: "completed", progress: 100, candidates: [candidateFor(version.id, title, generated)] };
+      const rows = await tx.insert(generationCandidates).values(
+        demos.map((demo, index) => ({
+          jobId: job.id,
+          projectId: project.id,
+          ownerId: owner.id,
+          title: candidateLabel(theme, quantity, index),
+          objectKey: demo.audioUrl ? `external://minimax/${job.id}/${index}` : `mock://demo/${job.id}/${index}`,
+          audioUrl: demo.audioUrl,
+          durationMs: demo.durationMs,
+          executionKind: demo.executionKind,
+          metadata: { hasAudio: Boolean(demo.audioUrl), audioUrl: demo.audioUrl, providerLabel: demo.providerLabel, outputType: routeOutputType, extraPrompt: briefPayload.extraPrompt, quantity },
+        })),
+      ).returning();
+      await tx.update(projects).set({ status: "review", currentLyrics: lyrics, updatedAt: new Date() }).where(eq(projects.id, project.id));
+      return { jobId: job.id, status: "completed" as const, progress: 100, candidates: rows.map(toCandidateView) };
     });
+  }
+
+  /** 真实库：按 briefId + 项目归属读取已确认简报内容（含生成参数）。 */
+  private async loadBriefPayload(briefId: string, projectId: string): Promise<BriefPayload> {
+    const [row] = await getDatabase().select().from(creativeBriefs).where(and(eq(creativeBriefs.id, briefId), eq(creativeBriefs.projectId, projectId))).limit(1);
+    if (!row) throw new DomainError("NOT_FOUND", 404, "简报不存在或无权访问");
+    return row.payload as unknown as BriefPayload;
+  }
+
+  /** 将选中的未保存候选事务转为正式版本（首个设为主版本），回填 savedVersionId。 */
+  async saveCandidates(owner: AuthUser, unknownInput: unknown): Promise<SaveCandidatesResult> {
+    const input = saveCandidatesSchema.parse(unknownInput);
+    const project = await getProjectRepository().findOwned(input.projectId, owner.id);
+    if (!project) throw new DomainError("NOT_FOUND", 404, "项目不存在或无权访问");
+
+    if (!process.env.DATABASE_URL) {
+      const saved: DemoVersionView[] = [];
+      // 同一批保存的候选互为兄弟节点，父节点为保存前的当前主版本（无则为空）。
+      const parentId = [...mockVersionIndex.entries()].find(([, item]) => item.projectId === input.projectId && item.isMain)?.[0] ?? null;
+      for (const candidateId of input.candidateIds) {
+        const entry = mockCandidates.get(candidateId);
+        if (!entry || entry.ownerId !== owner.id || entry.projectId !== input.projectId) throw new DomainError("NOT_FOUND", 404, "候选不存在或无权访问");
+        if (entry.savedVersionId) {
+          const existing = mockVersionIndex.get(entry.savedVersionId);
+          if (existing) saved.push(this.toVersionView(entry.savedVersionId, existing));
+          continue;
+        }
+        const versionId = crypto.randomUUID();
+        const versionNo = [...mockVersionIndex.values()].filter((item) => item.projectId === input.projectId).length + 1;
+        if (saved.length === 0) mockVersionIndex.forEach((item) => { if (item.projectId === input.projectId) item.isMain = false; });
+        const candidate = entry.candidate;
+        mockVersionIndex.set(versionId, { projectId: input.projectId, ownerId: owner.id, candidate: { ...candidate, id: versionId }, createdAt: new Date().toISOString(), isMain: saved.length === 0, versionNo, snapshot: { lyrics: project.lyrics, variation: candidate.variation, parentId } });
+        entry.savedVersionId = versionId;
+        saved.push({ id: versionId, versionNo, title: candidate.title, variation: candidate.variation, isMain: saved.length === 0, createdAt: new Date().toISOString(), executionKind: candidate.executionKind, hasAudio: candidate.hasAudio, audioUrl: candidate.audioUrl });
+      }
+      return { saved };
+    }
+
+    const db = getDatabase();
+    const saved = await db.transaction(async (tx) => {
+      const rows = await tx.select().from(generationCandidates).where(and(eq(generationCandidates.projectId, input.projectId), inArray(generationCandidates.id, input.candidateIds)));
+      if (rows.length !== input.candidateIds.length) throw new DomainError("NOT_FOUND", 404, "候选不存在或无权访问");
+      // 同一批候选互为兄弟节点：父节点为保存前的当前主版本（无则为空）。
+      const [currentMain] = await tx.select({ id: demoVersions.id }).from(demoVersions).where(and(eq(demoVersions.projectId, input.projectId), eq(demoVersions.isMain, true))).limit(1);
+      const parentId = currentMain?.id ?? null;
+      await tx.update(demoVersions).set({ isMain: false }).where(eq(demoVersions.projectId, input.projectId));
+      const out: DemoVersionView[] = [];
+      for (const candidateRow of rows) {
+        if (candidateRow.ownerId !== owner.id) throw new DomainError("FORBIDDEN", 403, "无权保存该候选");
+        if (candidateRow.savedVersionId) {
+          const [existing] = await tx.select().from(demoVersions).where(eq(demoVersions.id, candidateRow.savedVersionId)).limit(1);
+          if (existing) out.push({ id: existing.id, versionNo: existing.versionNo, title: candidateRow.title, variation: "应援合唱版", isMain: existing.isMain, createdAt: existing.createdAt.toISOString(), executionKind: candidateRow.executionKind, hasAudio: Boolean(candidateRow.metadata?.hasAudio), audioUrl: candidateRow.audioUrl });
+          continue;
+        }
+        const [last] = await tx.select({ versionNo: demoVersions.versionNo }).from(demoVersions).where(eq(demoVersions.projectId, input.projectId)).orderBy(desc(demoVersions.versionNo)).limit(1);
+        const versionNo = (last?.versionNo ?? 0) + 1;
+        const [version] = await tx.insert(demoVersions).values({ projectId: input.projectId, parentId, versionNo, snapshot: { lyrics: project.lyrics, variation: candidateRow.title }, isMain: out.length === 0, createdBy: owner.id }).returning();
+        if (!version) throw new Error("Version creation failed");
+        await tx.insert(demoAssets).values({ versionId: version.id, jobId: candidateRow.jobId, objectKey: candidateRow.objectKey ?? `external://candidate/${candidateRow.id}`, durationMs: candidateRow.durationMs, executionKind: candidateRow.executionKind, metadata: { title: candidateRow.title, hasAudio: Boolean(candidateRow.metadata?.hasAudio), audioUrl: candidateRow.audioUrl, providerLabel: candidateRow.metadata?.providerLabel } });
+        await tx.update(generationCandidates).set({ savedVersionId: version.id }).where(eq(generationCandidates.id, candidateRow.id));
+        out.push({ id: version.id, versionNo, title: candidateRow.title, variation: "应援合唱版", isMain: out.length === 0, createdAt: version.createdAt.toISOString(), executionKind: candidateRow.executionKind, hasAudio: Boolean(candidateRow.metadata?.hasAudio), audioUrl: candidateRow.audioUrl });
+      }
+      return out;
+    });
+    if (saved.length) {
+      await db.update(projects).set({ status: "ready", mainVersionId: saved[0]!.id, currentLyrics: project.lyrics, updatedAt: new Date() }).where(eq(projects.id, input.projectId));
+    }
+    return { saved };
+  }
+
+  private toVersionView(id: string, entry: MockVersionEntry): DemoVersionView {
+    return { id, versionNo: entry.versionNo, title: entry.candidate.title, variation: entry.candidate.variation, isMain: entry.isMain, createdAt: entry.createdAt, executionKind: entry.candidate.executionKind, hasAudio: entry.candidate.hasAudio, audioUrl: entry.candidate.audioUrl };
   }
 
   /** 项目内版本列表（创作库按项目维度展示，版本归属同一首歌）。 */
@@ -117,7 +279,7 @@ export class GenerationService {
       const source = mockVersionIndex.get(sourceVersionId); if (!source || source.projectId !== projectId || source.ownerId !== owner.id) throw new DomainError("NOT_FOUND", 404, "版本不存在");
       const id = crypto.randomUUID(); const versionNo = Math.max(0, ...[...mockVersionIndex.values()].filter((item) => item.projectId === projectId).map((item) => item.versionNo)) + 1;
       mockVersionIndex.forEach((entry) => { if (entry.projectId === projectId) entry.isMain = false; });
-      const candidate = candidateFor(id, `${source.candidate.title.replace(/ · V\d+$/, "")} · V${versionNo}`, { audioUrl: source.candidate.audioUrl ?? null, durationMs: source.candidate.durationMs, executionKind: source.candidate.executionKind, providerLabel: source.candidate.executionKind === "real_external" ? "MiniMax Music" : "SongDraft Mock" });
+      const candidate = { ...source.candidate, id, title: `${source.candidate.title.replace(/ 候选 [A-Z]$| · V\d+$/, "")} · V${versionNo}` };
       mockVersionIndex.set(id, { ...source, candidate, versionNo, isMain: true, createdAt: new Date().toISOString(), snapshot: { ...source.snapshot, restoredFromVersionId: sourceVersionId } });
       return { id, versionNo, title: candidate.title, variation: candidate.variation, isMain: true, createdAt: new Date().toISOString(), executionKind: candidate.executionKind, hasAudio: candidate.hasAudio, audioUrl: candidate.audioUrl, restoredFromVersionId: sourceVersionId };
     }

@@ -250,6 +250,33 @@ export const demoAssets = pgTable("demo_assets", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * 生成候选（docs/SPEC.md §7.4）：生成完成只创建候选，用户点「保存为版本」后才进入
+ * demo_versions 正式历史。未保存候选可删除，不污染版本树。savedVersionId 在保存后回填。
+ */
+export const generationCandidates = pgTable(
+  "generation_candidates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    jobId: uuid("job_id").notNull().references(() => generationJobs.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    ownerId: uuid("owner_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    objectKey: text("object_key"),
+    audioUrl: text("audio_url"),
+    durationMs: integer("duration_ms").notNull(),
+    executionKind: executionKind("execution_kind").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    savedVersionId: uuid("saved_version_id").references(() => demoVersions.id, { onDelete: "set null" }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("candidates_project_created_idx").on(table.projectId, table.createdAt),
+    index("candidates_job_idx").on(table.jobId),
+  ],
+);
+
 export const shareLinks = pgTable(
   "share_links",
   {

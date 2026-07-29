@@ -58,13 +58,16 @@ export function InspirationRecordPage() {
     return { ...common, primaryKind: "image", image: { note, assetIds: assets.map((asset) => asset.id), moods } };
   }, [assets, kind, moods, note, referenceWorks, soundHints, speedFeel, text, textType, title]);
 
-  useEffect(() => {
-    // Tabs represent separate drafts; never overwrite a saved audio record with text.
+  // 切换 Tab 代表切换草稿：重置本地编辑态，避免用文本覆盖已保存的音频记录。
+  // 用「渲染期间调整 state」替代 effect，避免级联渲染（react-hooks/set-state-in-effect）。
+  const [prevKind, setPrevKind] = useState<CaptureKind>(kind);
+  if (kind !== prevKind) {
+    setPrevKind(kind);
     setRecordId(null);
     setAssets([]);
     setStatus("idle");
     setMessage("");
-  }, [kind]);
+  }
 
   useEffect(() => {
     if (!recordId || !snapshot) return;
@@ -211,7 +214,12 @@ export function InspirationRecordPage() {
 
 function MediaCapture({ kind, recordId, note, setNote, assets, onPrepare, onUploaded }: { kind: "audio" | "image"; recordId: string | null; note: string; setNote: (value: string) => void; assets: CapturedMedia[]; onPrepare: () => Promise<string>; onUploaded: (asset: CapturedMedia) => void }) {
   const [preparedId, setPreparedId] = useState<string | null>(recordId);
-  useEffect(() => setPreparedId(recordId), [recordId]);
+  // recordId 由父级异步创建后回传：在渲染期间同步本地 preparedId，避免 effect 级联渲染。
+  const [prevRecordId, setPrevRecordId] = useState<string | null>(recordId);
+  if (recordId !== prevRecordId) {
+    setPrevRecordId(recordId);
+    setPreparedId(recordId);
+  }
   async function prepare() { setPreparedId(await onPrepare()); }
   return <div className="space-y-4"><textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={1000} placeholder={kind === "audio" ? "这段旋律像什么？可以标注副歌、节奏或想保留的声音。" : "写下图片带来的画面、色彩或情绪。"} className="min-h-24 w-full resize-y rounded-lg border border-input bg-background p-3 text-sm outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring" />{preparedId ? <InspirationMediaCapture recordId={preparedId} kind={kind} onUploaded={onUploaded} /> : <button type="button" onClick={() => void prepare()} className="flex min-h-32 w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-muted/30 text-sm font-medium text-foreground hover:bg-muted"><Sparkles className="size-5 text-brand" />准备{kind === "audio" ? "录音 / 上传" : "图片上传"}</button>}{assets.length > 0 && <div className="grid gap-2 sm:grid-cols-2">{assets.map((asset) => <div key={asset.id} className="flex items-center gap-3 rounded-lg border border-border bg-card p-2.5">{kind === "image" ? <img src={asset.previewUrl} alt="已上传的图片灵感" className="size-12 rounded object-cover" /> : <AudioLines className="size-5 text-brand" />}<p className="min-w-0 truncate text-sm">{asset.label}</p><Check className="ml-auto size-4 text-success" /></div>)}</div>}</div>;
 }

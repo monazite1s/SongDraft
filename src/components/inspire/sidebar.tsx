@@ -1,24 +1,23 @@
 'use client'
 
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import {
   AudioLines,
   LayoutGrid,
   Lightbulb,
   FolderClosed,
-  Share2,
   Cpu,
-  Settings,
   Plus,
   LifeBuoy,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const nav = [
-  { icon: Lightbulb, label: '灵感记录', href: '/', active: true },
-  { icon: LayoutGrid, label: '制作台', href: '/create' },
-  { icon: FolderClosed, label: '创作库', href: '/works' },
-  { icon: Cpu, label: '设置', href: '/settings' },
+  { icon: Lightbulb, label: '灵感记录', href: '/', match: (pathname: string) => pathname === '/' },
+  { icon: LayoutGrid, label: '制作台', href: '/create', match: (pathname: string) => pathname === '/create' || pathname.startsWith('/create/') },
+  { icon: FolderClosed, label: '创作库', href: '/works', match: (pathname: string) => pathname === '/works' || pathname.startsWith('/works/') },
+  { icon: Cpu, label: '设置', href: '/settings', match: (pathname: string) => pathname === '/settings' || pathname.startsWith('/settings/') },
 ]
 
 const projects = [
@@ -28,6 +27,8 @@ const projects = [
 ]
 
 export function Sidebar() {
+  const pathname = usePathname()
+
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
       <div className="flex h-14 items-center gap-2 px-4">
@@ -47,21 +48,25 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-0.5 px-3 py-2">
-        {nav.map((item) => (
-          <Link
-            key={item.label}
-            href={item.href || '#'}
-            className={cn(
-              'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors',
-              item.active
-                ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
-                : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
-            )}
-          >
-            <item.icon className="size-4" />
-            {item.label}
-          </Link>
-        ))}
+        {nav.map((item) => {
+          const active = item.match(pathname)
+          return (
+            <Link
+              key={item.label}
+              href={item.href}
+              aria-current={active ? 'page' : undefined}
+              className={cn(
+                'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors',
+                active
+                  ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
+                  : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
+              )}
+            >
+              <item.icon className="size-4" />
+              {item.label}
+            </Link>
+          )
+        })}
       </nav>
 
       <div className="mt-2 px-3">

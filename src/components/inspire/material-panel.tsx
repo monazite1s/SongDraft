@@ -381,14 +381,15 @@ export function MaterialPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between px-4 pb-2 pt-4">
+      {/* 标题与 Tab 之间、Tab 与内容之间都靠 Tab 的 my-[30px] 撑开；相邻区域不用再叠 py，避免视觉间距被放大 */}
+      <div className="flex items-center justify-between px-4 pt-4">
         <h2 className="text-sm font-semibold text-foreground">素材构建</h2>
         <span className="text-[11px] text-muted-foreground">
           已选 {selectedInputs.length} / 3 类素材
         </span>
       </div>
 
-      <div className="flex gap-1 px-3">
+      <div className="my-[10px] flex gap-1 px-3">
         {TABS.map((t) => {
           const active = tab === t.id
           const included = selectedInputs.includes(t.kind)
@@ -413,7 +414,7 @@ export function MaterialPanel({
         })}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto px-4 pb-4">
         <div className="mb-3 flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2">
           <span className="text-xs text-muted-foreground">纳入本次生成</span>
           <Switch

@@ -1,5 +1,13 @@
 # SongDraft 后续工作与 Vercel 发布
 
+## 0. P0 待办（上线前，待排期）
+
+- **outputType 值统一**：将 `melody` 改为 `melody_sketch`（SPEC §7.5）。涉及 `src/lib/inspire-data.ts` 的 `OutputType` 与 `OUTPUT_TYPES`、`PROVIDERS.outputs`、版本/候选数据，以及 DB enum/迁移。当前 UI 标签均为「旋律草图」不受影响，故暂缓；上线前需统一并回归。
+- **P0-3 生成参数走 Brief（已完成）**：`outputType`/`extraPrompt`/`quantity` 现存入 `creative_briefs.payload`，`POST /api/generation-jobs` 仅接收 `projectId + briefId + idempotencyKey`，`GenerationService.generate` 从该简报读取全部参数（含三参数），不再硬编码 outputType；前端点「生成」时先把当前参数 PATCH 进简报再据此生成。注：简报沿用别名 `melody`，生成计划内部归一化为 canonical `melody_sketch`，完整重命名见下条。
+- **版本树删除/应用接线**：弹窗「删除/应用」按钮接现有 `/restore` + 新增版本删除 API；数据源换真实 `listVersions`（当前用静态 `VERSIONS`）。
+- **P0-4 灵感库 `/inspirations`**：`InspirationRepository.listPage` + 6 个端点 + 桌面表格/H5 卡片页。
+- **P0-5 分享白名单**：`share_members` 表 + 首次有效访问入白名单 + owner 列表/撤销（当前 token 即公开，安全硬伤）。
+
 ## 1. 当前已完成边界
 
 - 对话式首页、热门虚构艺人、事件 Tag、SSE 思考/逐字输出和实时歌词预览。

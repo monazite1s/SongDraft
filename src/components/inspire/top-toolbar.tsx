@@ -17,10 +17,8 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
-  OUTPUT_TYPES,
   PROVIDERS,
   type InputKind,
-  type OutputType,
   type Provider,
 } from '@/lib/inspire-data'
 import { ModeTag, StatusDot } from './ui'
@@ -65,8 +63,6 @@ function Popover({
 export function TopToolbar({
   provider,
   onProviderChange,
-  outputType,
-  onOutputChange,
   selectedInputs,
   projectTitle,
   saveState,
@@ -78,8 +74,6 @@ export function TopToolbar({
 }: {
   provider: Provider
   onProviderChange: (p: Provider) => void
-  outputType: OutputType
-  onOutputChange: (o: OutputType) => void
   selectedInputs: InputKind[]
   projectTitle: string
   saveState: 'dirty' | 'saving' | 'saved' | 'error'
@@ -90,11 +84,9 @@ export function TopToolbar({
   onManageProviders: () => void
 }) {
   const [providerOpen, setProviderOpen] = useState(false)
-  const [outputOpen, setOutputOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
 
   const unsupported = selectedInputs.filter((i) => !provider.supports.includes(i))
-  const outputName = OUTPUT_TYPES.find((o) => o.id === outputType)!
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-4">
@@ -192,45 +184,6 @@ export function TopToolbar({
                 管理供应商与能力…
               </button>
             </div>
-          </Popover>
-        </div>
-
-        {/* output type selector */}
-        <div className="relative">
-          <button
-            onClick={() => setOutputOpen((v) => !v)}
-            aria-expanded={outputOpen}
-            className="flex h-8 items-center gap-2 rounded-lg border border-border bg-background px-2.5 text-sm text-foreground transition-colors hover:bg-muted"
-          >
-            <span className="max-w-28 truncate">{outputName.label}</span>
-            <ChevronDown className="size-3.5 text-muted-foreground" />
-          </button>
-          <Popover
-            open={outputOpen}
-            onClose={() => setOutputOpen(false)}
-            align="end"
-            className="w-64"
-          >
-            {OUTPUT_TYPES.map((o) => (
-              <button
-                key={o.id}
-                onClick={() => {
-                  onOutputChange(o.id)
-                  setOutputOpen(false)
-                }}
-                className="flex w-full items-start gap-2 rounded-lg p-2 text-left transition-colors hover:bg-muted"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="text-sm font-medium text-foreground">
-                    {o.label}
-                  </span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
-                    {o.hint}
-                  </span>
-                </span>
-                {o.id === outputType && <Check className="size-4 text-brand" />}
-              </button>
-            ))}
           </Popover>
         </div>
 

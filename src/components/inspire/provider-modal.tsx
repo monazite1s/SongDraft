@@ -42,7 +42,7 @@ export function ProviderModal({
       description="选择生成供应商，并查看各自支持的输入类型与真实 / 模拟状态。"
       className="max-w-2xl"
     >
-      <div className="max-h-[60vh] space-y-3 overflow-y-auto p-5">
+      <div className="scrollbar-none max-h-[60vh] space-y-3 overflow-y-auto p-5">
         {PROVIDERS.map((p) => {
           const active = p.id === current.id
           return (

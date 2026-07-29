@@ -3,9 +3,9 @@
 /**
  * SongDraft 唯一主创作容器（docs/development-state.md、docs/technical-design.md §2）
  *
- * 布局：Sidebar + TopToolbar + 三栏（MaterialPanel / ActionColumn / BriefPanel）。
+ * 布局：Sidebar + TopToolbar + 等分栏（素材构建 / 成果，权重 1:1；未来详情半屏为 1:1:1）。
  * 编排项目创建 → 草稿保存 → DeepSeek 精修歌词 SSE → MiniMax 生成 Demo。
- * `/`、`/create`、`/create/[projectId]` 均挂载此组件；前端永不接触 Provider Key。
+ * `/create`、`/create/[projectId]` 挂载此组件；前端永不接触 Provider Key。
  */
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -16,7 +16,7 @@ import type { GenerationResult } from '@/modules/generation/generation-types'
 import { Sidebar } from './sidebar'
 import { TopToolbar } from './top-toolbar'
 import { MaterialPanel, type MaterialDraft } from './material-panel'
-import { type Busy, type Phase } from './action-column'
+import { WorkspacePrimaryAction, type Busy, type Phase } from './action-column'
 import { BriefPanel } from './brief-panel'
 import { VersionModal } from './version-modal'
 import { ProviderModal } from './provider-modal'
@@ -25,6 +25,7 @@ import {
   DEFAULT_BRIEF,
   DEMO_CANDIDATES,
   PROVIDERS,
+  type CreativeBrief,
   type InputKind,
   type OutputType,
   type Provider,
@@ -32,6 +33,8 @@ import {
 
 type SaveState = 'dirty' | 'saving' | 'saved' | 'error'
 type ApiEnvelope<T> = { ok: boolean; data?: T; error?: { message?: string } }
+/** 创意简报接口响应（仅取前端需要的字段，避免引入 server-only 类型）。 */
+type BriefResponse = { id: string; payload: CreativeBrief; confirmedAt: string | null }
 
 const defaultLyrics = `路灯把影子拉得很长
 我数着水洼里的光
@@ -57,9 +60,15 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
   const [selectedInputs, setSelectedInputs] = useState<InputKind[]>(['text', 'audio', 'image'])
   const [coverSet, setCoverSet] = useState(true)
   const [quantity, setQuantity] = useState(3)
-  const [phase, setPhase] = useState<Phase>('brief')
+  const [extraPrompt, setExtraPrompt] = useState('')
+  /** 创意简报：由 /api/projects/[id]/brief 生成，替换静态 DEFAULT_BRIEF。 */
+  const [brief, setBrief] = useState<CreativeBrief>(DEFAULT_BRIEF)
+  const [briefId, setBriefId] = useState<string | null>(null)
+  const [phase, setPhase] = useState<Phase>('idle')
   const [busy, setBusy] = useState<Busy>(false)
   const [mainId, setMainId] = useState('c1')
+  /** 已保存为正式版本的候选 ID（候选/版本拆分：未保存候选不会进入版本历史）。 */
+  const [savedCandidateIds, setSavedCandidateIds] = useState<string[]>([])
   const [saveState, setSaveState] = useState<SaveState>(initialProject ? 'saved' : 'dirty')
   const [saveError, setSaveError] = useState('')
   const [versionNo, setVersionNo] = useState(initialProject ? 1 : 0)
@@ -126,14 +135,8 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         projectId: id,
+        briefId,
         lyrics: draft.lyrics,
-        creativeContext: { emotion: DEFAULT_BRIEF.mood.join('、'), source: 'v0-workspace' },
-        brief: {
-          theme: DEFAULT_BRIEF.theme,
-          mood: DEFAULT_BRIEF.mood.join('、'),
-          genre: DEFAULT_BRIEF.genre,
-          tempo: DEFAULT_BRIEF.tempo,
-        },
         idempotencyKey: crypto.randomUUID(),
       }),
     })
@@ -144,7 +147,7 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
       const seconds = Math.max(1, Math.round(candidate.durationMs / 1000))
       return {
         ...visual,
-        id: candidate.versionId,
+        id: candidate.id,
         title: candidate.title,
         providerId: 'minimax',
         mode: candidate.executionKind === 'real_external' ? 'real' as const : 'simulated' as const,
@@ -244,28 +247,74 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
     }
   }
 
-  async function handlePrimary() {
+  /** 生成创意简报：确保项目存在 → POST /api/projects/[id]/brief → 写入真实简报。 */
+  async function generateBrief() {
     if (busy) return
-    if (phase === 'idle') {
-      setBusy('analyze')
-      window.setTimeout(() => {
-        setBusy(false)
-        setPhase('brief')
-      }, 900)
-    } else {
-      setBusy('generate')
-      setSaveError('')
-      try {
-        const id = await ensureProject()
-        setPhase('results')
-        await createVersion(id)
-        setSaveState('saved')
-      } catch (error) {
-        setPhase('brief')
-        setSaveError(error instanceof Error ? error.message : '生成失败，请重试')
-      } finally {
-        setBusy(false)
+    setSaveError('')
+    setBusy('analyze')
+    try {
+      const id = await ensureProject()
+      const response = await fetch(`/api/projects/${id}/brief`, { method: 'POST' })
+      const body = await response.json() as ApiEnvelope<BriefResponse>
+      if (!response.ok || !body.data) throw new Error(body.error?.message || '简报生成失败')
+      setBrief(body.data.payload)
+      setBriefId(body.data.id)
+      setPhase('brief')
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : '简报生成失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 生成 Demo：「生成」即确认当前简报，直接调用生成 API 创建候选。 */
+  async function generateDemo() {
+    if (busy) return
+    setBusy('generate')
+    setSaveError('')
+    setSavedCandidateIds([])
+    try {
+      const id = await ensureProject()
+      // 生成即确认：先把当前 outputType/额外要求/数量 PATCH 进简报，再据此生成（P0-3）。
+      if (briefId) {
+        await fetch(`/api/projects/${id}/brief/${briefId}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ...brief, outputType, extraPrompt, quantity }),
+        })
       }
+      setPhase('results')
+      await createVersion(id)
+      setSaveState('saved')
+    } catch (error) {
+      setPhase('brief')
+      setSaveError(error instanceof Error ? error.message : '生成失败，请重试')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 将选中的未保存候选保存为正式版本（互为兄弟节点），成功后标记已保存。 */
+  async function handleSaveVersion(candidateIds: string[]) {
+    if (!projectId || busy || candidateIds.length === 0) return
+    setSaveError('')
+    try {
+      const response = await fetch('/api/generation-candidates/save', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId, candidateIds }),
+      })
+      const body = await response.json() as ApiEnvelope<{ saved: Array<{ id: string; versionNo: number }> }>
+      if (!response.ok || !body.data) throw new Error(body.error?.message || '保存版本失败')
+      setSavedCandidateIds((prev) => {
+        const next = new Set(prev)
+        candidateIds.forEach((id) => next.add(id))
+        return [...next]
+      })
+      setVersionNo((current) => current + body.data!.saved.length)
+      setSaveState('saved')
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : '保存版本失败')
     }
   }
 
@@ -276,8 +325,6 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
         <TopToolbar
           provider={provider}
           onProviderChange={(next) => { setProvider(next); markDirty() }}
-          outputType={outputType}
-          onOutputChange={(next) => { setOutputType(next); markDirty() }}
           selectedInputs={selectedInputs}
           projectTitle={projectTitle}
           saveState={saveState}
@@ -287,8 +334,12 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
           onOpenShare={() => setShareOpen(true)}
           onManageProviders={() => setProvidersOpen(true)}
         />
-        <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto xl:grid-cols-[360px_minmax(0,1fr)] xl:overflow-hidden">
-          <div className="border-b border-border bg-card/40 xl:border-b-0 xl:border-r xl:overflow-y-auto">
+        {/*
+          等分栏：minmax(0,1fr) + 子项 min-w-0，避免内容 min-content 把某一栏撑宽。
+          当前两栏 1:1；未来详情半屏打开时改为三列 1:1:1（同一套 1fr 权重）。
+        */}
+        <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:overflow-hidden">
+          <div className="scrollbar-none min-w-0 border-b border-border bg-card/40 xl:border-b-0 xl:border-r xl:overflow-y-auto">
             <MaterialPanel
               selectedInputs={selectedInputs}
               onToggleInput={toggleInput}
@@ -301,19 +352,32 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
               refinementMessage={refinementMessage}
               refinementError={refinementError}
               onRefine={() => void refineLyrics()}
+              footer={
+                <WorkspacePrimaryAction
+                  busy={busy}
+                  selectedInputs={selectedInputs}
+                  onPrimary={generateBrief}
+                />
+              }
             />
           </div>
-          <div className="xl:overflow-y-auto">
+          <div className="scrollbar-none min-w-0 xl:overflow-y-auto">
             <BriefPanel
               phase={phase}
               busy={busy}
-              brief={DEFAULT_BRIEF}
-              provider={provider}
+              brief={brief}
+              outputType={outputType}
+              onOutputChange={(next) => { setOutputType(next); markDirty() }}
+              extraPrompt={extraPrompt}
+              onExtraPromptChange={setExtraPrompt}
               quantity={quantity}
+              onQuantityChange={(next) => { setQuantity(next); markDirty() }}
+              onGenerate={() => void generateDemo()}
               candidates={candidates}
+              savedCandidateIds={savedCandidateIds}
               mainId={mainId}
               onSetMain={(id) => { setMainId(id); markDirty() }}
-              onSaveVersion={() => void save()}
+              onSaveVersion={(ids) => void handleSaveVersion(ids)}
             />
           </div>
         </div>

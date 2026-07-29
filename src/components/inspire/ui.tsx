@@ -138,3 +138,44 @@ export function Badge({
     </span>
   )
 }
+
+/**
+ * 必选且互斥的 Tag 单选组（docs/SPEC.md §0 / §6.4）。
+ * 用于创意简报的「输出类型」等字段；点击已选项不会清空，始终保留一个选中值。
+ */
+export function RadioTags<T extends string>({
+  value,
+  options,
+  onChange,
+  className,
+}: {
+  value: T
+  options: { value: T; label: string }[]
+  onChange: (value: T) => void
+  className?: string
+}) {
+  return (
+    <div className={cn('flex flex-wrap gap-1.5', className)} role="radiogroup">
+      {options.map((option) => {
+        const active = option.value === value
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChange(option.value)}
+            className={cn(
+              'rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
+              active
+                ? 'border-brand bg-brand-muted text-foreground'
+                : 'border-border bg-background text-muted-foreground hover:bg-muted',
+            )}
+          >
+            {option.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}

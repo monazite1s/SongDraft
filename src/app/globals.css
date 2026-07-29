@@ -113,7 +113,22 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    /* 页面级滚动条始终预留占位，避免出现/消失时整页宽度跳动 */
+    scrollbar-gutter: stable;
+  }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* 组件内部长滚动区域：可滚动但不显示滚动条（页面级滚动条仍保留） */
+@layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }

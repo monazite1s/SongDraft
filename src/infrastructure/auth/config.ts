@@ -5,5 +5,16 @@ export function isSupabaseConfigured() {
 }
 
 export function isMockAuthEnabled() {
-  return process.env.AUTH_MODE === "mock" && process.env.NODE_ENV !== "production";
+  if (process.env.NODE_ENV === "production") return false;
+
+  const mode = process.env.AUTH_MODE?.trim().toLowerCase();
+  if (mode) return mode === "mock";
+
+  // Keep a fresh checkout runnable without requiring third-party credentials.
+  return !isSupabaseConfigured();
+}
+
+export function getAuthConfigurationError() {
+  if (isMockAuthEnabled() || isSupabaseConfigured()) return null;
+  return "认证服务尚未配置，请设置 Supabase 环境变量或在本地使用 AUTH_MODE=mock";
 }

@@ -67,7 +67,7 @@ SongDraft 把**捕捉、结构化、生成、版本、分享**做成一个短闭
 
 SongDraft 目前是一个 Hackathon 阶段的可运行原型，用来验证一条完整的产品链路。
 
-- 当前工作台的候选为**明确标注的模拟结果**；尚未接入授权样例音频或真实音乐模型，不能视为可试听成品。
+- 当前工作台的候选为**明确标注的模拟结果**，可播放浏览器本地合成的短音阶用于演示交互；它不是外部音乐模型产物，不能视为真实音乐 Demo。
 - 已完成的可运行主链路为：认证封装、文字建项目、Project API、Brief/Plan 交互、Mock 存储和受保护上传 API，以及透明 Mock 的版本、私密分享和评论。真实音频、完整素材编辑与外部 Provider 对接仍在迭代，详见 `docs/future-work.md`。
 - 后续接入真实的音乐生成能力时，无需改变核心使用方式，但会补全异步任务、音频转存和版本持久化。
 
@@ -84,8 +84,7 @@ SongDraft 目前是一个 Hackathon 阶段的可运行原型，用来验证一�
 
 ```bash
 pnpm install --frozen-lockfile
-cp .env.example .env.local
 pnpm dev
 ```
 
-本地默认使用透明的 Auth、Storage、Music Mock；配置 `DATABASE_URL` 后项目会写入 PostgreSQL。发布与真实 COS / DeepSeek / 音乐平台的接入步骤请看 [后续工作与发布手册](docs/future-work.md)。
+未创建 `.env.local` 时，开发环境会自动使用透明的 Auth、Storage、Music Mock，可直接访问。需要接入外部服务时再复制 `.env.example` 并填写配置；配置 `DATABASE_URL` 后项目会写入 PostgreSQL。生产环境不会自动启用 Mock Auth。推荐使用 Node.js 22，发布与真实 COS / DeepSeek / 音乐平台的接入步骤请看 [后续工作与发布手册](docs/future-work.md)。

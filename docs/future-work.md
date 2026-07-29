@@ -6,7 +6,7 @@
 
 已具备：Next.js 全栈骨架、响应式桌面/H5 Layout、Supabase Auth 封装、Drizzle Schema 与首次迁移、项目创建 API、COS/Mock Storage 抽象与受保护上传 Intent、浏览器哼唱录音/音视频文件选择、创作工作台的 Brief/Plan/Mock 交互、持久化 Generation Job/Version/Share/Comment 服务与公开 H5 分享页。
 
-当前 Mock 的边界：没有 `DATABASE_URL` 时项目、版本、分享和评论仅在进程内存保存；音乐候选展示为明确标注的无音频模拟结果。真实生产使用时，数据库持久化路径已实现，但仍需完成外部音频 Provider、COS 播放地址与完整素材 UI 对接。
+当前 Mock 的边界：没有 `DATABASE_URL` 时项目、版本、分享和评论仅在进程内存保存；音乐候选可播放浏览器本地合成短音阶，但它只是交互样例，并非外部音乐 Provider 生成结果。真实生产使用时，数据库持久化路径已实现，但仍需完成外部音频 Provider、COS 播放地址与完整素材 UI 对接。
 
 ## 2. 后续待完成工作
 
@@ -108,4 +108,4 @@ pnpm build
 
 ## 5. 演示模式说明
 
-本地可用 `.env.local` 设置 `AUTH_MODE=mock`、`STORAGE_DRIVER=mock`、`MUSIC_PROVIDER_MODE=mock`。Mock 只用于开发/评审，生产环境不得启用 `AUTH_MODE=mock`，也不得把无音频候选显示为“已生成歌曲”。
+本地没有 `.env.local` 时会自动使用透明 Mock；也可显式设置 `AUTH_MODE=mock`、`STORAGE_DRIVER=mock`、`MUSIC_PROVIDER_MODE=mock`。Mock 只用于开发/评审，生产环境不得启用 Mock Auth，也不得把本地合成音阶显示为“AI 已生成歌曲”。

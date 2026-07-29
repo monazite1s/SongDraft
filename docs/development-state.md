@@ -55,7 +55,7 @@
 
 - Supabase SSR server/client 封装。
 - 登录、注册、退出 Server Actions。
-- `AUTH_MODE=mock` 仅允许非生产本地预览；生产不自动启用 Mock。
+- 非生产环境在未配置 Supabase 且未显式选择认证模式时自动使用 Mock，也可设置 `AUTH_MODE=mock`；生产环境始终关闭 Mock。
 - 私有 App Layout、桌面 Sidebar、手机底部导航。
 - Auth Layout、Public Share Layout。
 - 首页、创作台占位、作品、设置。
@@ -73,7 +73,7 @@
 
 ## 当前验证状态
 
-- `pnpm test`：28/28 通过（2026-07-29），涵盖组合识别、上传/私有预览/软删除、项目、作品筛选、Profile、合成样例播放器、Mock 分析/生成、Provider 路由、分享评论与导出文件名安全。
+- `pnpm test`：32/32 通过（2026-07-29），涵盖认证模式安全降级、组合识别、上传/私有预览/软删除、项目、作品筛选、Profile、合成样例播放器、Mock 分析/生成、Provider 路由、分享评论与导出文件名安全。
 - `pnpm lint`：通过。
 - `pnpm build`：通过，包含 Auth、项目 API、应用页面和三个上传 API。
 - `pnpm typecheck`：在构建完成后顺序执行并通过。

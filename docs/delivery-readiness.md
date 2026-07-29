@@ -34,7 +34,7 @@ Token / QR 分享 → 公开 H5 → 时间点评论
 
 以下功能已具备接口、数据模型和 UI，但因未提供云端密钥而以透明 Mock 运行：
 
-- Supabase：`AUTH_MODE=mock` 时提供开发演示用户；真实邮箱密码登录代码已存在。
+- Supabase：非生产且未配置 Supabase/未显式选择认证模式时自动提供开发演示用户，也可显式设置 `AUTH_MODE=mock`；生产环境始终关闭 Mock，真实邮箱密码登录代码已存在。
 - PostgreSQL：未配置 `DATABASE_URL` 时项目、版本、分享、评论保存在进程内存，重启后丢失。
 - COS：`STORAGE_DRIVER=mock` 时写入系统临时目录；生产可切至腾讯云 COS 预签名直传。
 - Analyzer：返回明确标注的 simulated 结果，不声称真实 BPM、音域或视觉识别。
@@ -45,7 +45,7 @@ Token / QR 分享 → 公开 H5 → 时间点评论
 截至本审计，以下命令已在当前 workspace 成功执行：
 
 ```bash
-pnpm test       # 26/26
+pnpm test       # 32/32
 pnpm lint
 pnpm build
 pnpm typecheck

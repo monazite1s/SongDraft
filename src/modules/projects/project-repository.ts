@@ -58,7 +58,11 @@ export class DrizzleProjectRepository implements ProjectRepository {
   }
 }
 
-const memoryProjects = new Map<string, ProjectDetail>();
+const mockGlobal = globalThis as typeof globalThis & {
+  __songDraftMemoryProjects?: Map<string, ProjectDetail>;
+};
+const memoryProjects = mockGlobal.__songDraftMemoryProjects ?? new Map<string, ProjectDetail>();
+mockGlobal.__songDraftMemoryProjects = memoryProjects;
 
 export class MockProjectRepository implements ProjectRepository {
   async create(owner: AuthUser, input: CreateProjectInput): Promise<ProjectDetail> {

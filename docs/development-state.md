@@ -73,12 +73,19 @@
 
 ## 当前验证状态
 
-- `pnpm test`：32/32 通过（2026-07-29），涵盖认证模式安全降级、组合识别、上传/私有预览/软删除、项目、作品筛选、Profile、合成样例播放器、Mock 分析/生成、Provider 路由、分享评论与导出文件名安全。
+- `pnpm test`：33/33 通过（2026-07-29），涵盖认证模式安全降级、v0 工作台渲染、工作台直接保存新项目、组合识别、上传/私有预览/软删除、项目、作品筛选、Profile、合成样例播放器、Mock 分析/生成、Provider 路由、分享评论与导出文件名安全。
 - `pnpm lint`：通过。
 - `pnpm build`：通过，包含 Auth、项目 API、应用页面和三个上传 API。
 - `pnpm typecheck`：在构建完成后顺序执行并通过。
 - 注意：不要并行运行 `pnpm build` 与 `pnpm typecheck`，两者会竞争 `.next/types`。
 - Supabase JS 提示 Node 20 将在未来弃用；当前开发机是 Node 20.20.2。近期可运行，部署和最终 README 应声明 Node 22 推荐。
+
+## v0 UI 复原与工作台行为
+
+- `/`、`/create/new` 与 `/create/[projectId]` 统一使用接近 1:1 复原 `inspire2-demo` 的三栏创作工作台：240px 侧栏、56px 顶栏、360px 素材区、248px 生成操作列及自适应结果区。
+- 作品库、作品详情与设置页沿用同一套 v0 设计令牌、侧栏、卡片、筛选器与弹窗组件；品牌统一替换为 SongDraft。
+- 新工作台无需预先创建项目：首次点击保存创建 Project 并继续留在完整工作台；后续点击保存创建新的 Demo Version。
+- 本地 Mock 项目仓库挂载到进程级共享对象，保证 API 创建、详情读取与 Generation API 在不同 Next.js 路由 bundle 间一致。
 
 ## 下一步顺序
 

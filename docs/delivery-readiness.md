@@ -45,11 +45,13 @@ Token / QR 分享 → 公开 H5 → 时间点评论
 截至本审计，以下命令已在当前 workspace 成功执行：
 
 ```bash
-pnpm test       # 32/32
+pnpm test       # 33/33
 pnpm lint
 pnpm build
 pnpm typecheck
 ```
+
+运行态 UI 验收已覆盖 `/`、`/create/new`、`/works`、`/settings` 与 `/works/[id]`；新建工作台首次保存创建项目，第二次保存创建新版本，浏览器实测版本标识由 `v1` 更新为 `v3`。
 
 单元测试覆盖：C1–C7 组合、项目创建、上传归属/校验/完成、私有读取和软删除、Mock 分析、Capability Router、生成版本主版本、分享/有效期/撤回、评论回流/已读/软删除、作品筛选、导出文件名安全。
 

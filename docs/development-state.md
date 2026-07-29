@@ -20,7 +20,7 @@
 
 - 仓库根目录：`/Users/marongzhen/Desktop/hackthon`
 - 当前分支：`feature/songdraft-foundation`
-- 当前唯一提交：`ad96229 chore: initialize SongDraft application`
+- 此工作区通过 `.git` 指向原仓库的 worktree 元数据；受限环境下 Git 元数据不可解析。继续只修改当前目录，不做提交操作。
 - `main` 没有被直接开发。
 - `.gitignore` 已覆盖 `.DS_Store`、`inspire2-demo/`、`.env*`、`node_modules/`、`.next/`、测试产物和 `*.tsbuildinfo`。
 - 当前基础架构改动尚未提交；提交前必须重新检查 `git diff --cached --name-only`。
@@ -73,20 +73,19 @@
 
 ## 当前验证状态
 
-- `pnpm test`：16/16 通过。
+- `pnpm test`：28/28 通过（2026-07-29），涵盖组合识别、上传/私有预览/软删除、项目、作品筛选、Profile、合成样例播放器、Mock 分析/生成、Provider 路由、分享评论与导出文件名安全。
 - `pnpm lint`：通过。
-- `pnpm build`：通过，包含 Auth、应用页面和三个上传 API。
+- `pnpm build`：通过，包含 Auth、项目 API、应用页面和三个上传 API。
 - `pnpm typecheck`：在构建完成后顺序执行并通过。
 - 注意：不要并行运行 `pnpm build` 与 `pnpm typecheck`，两者会竞争 `.next/types`。
 - Supabase JS 提示 Node 20 将在未来弃用；当前开发机是 Node 20.20.2。近期可运行，部署和最终 README 应声明 Node 22 推荐。
 
 ## 下一步顺序
 
-1. 为 App Shell、认证配置和 Skeleton 增加少量关键测试，不追求机械覆盖。
-2. 实现 Project Repository/Service 与真实首页创建项目流程。
-3. 实现 Analyzer → Creative Brief → Router → Generation Plan → Mock Job → Version。
-4. 实现 Share Token、二维码、公开播放和版本绑定评论。
-5. 框架稳定后，才从 `inspire2-demo` 迁移 Design Token 和展示组件，不迁移假数据与顶层 `useState`。
+1. 已实现 Project Repository/Service（PostgreSQL 与透明内存 Mock）及首页创建项目流程、项目列表。
+2. 已实现工作台文字、录音、图片/视频上传 UI、Mock Analyzer、Brief/Plan/透明 Mock 交互，以及 Generation Job、版本历史/主版本、Share Token/撤回、公开 H5 和评论服务。
+3. Mock Capability Router、评论回流/管理、分享列表/有效期、作品筛选、应用 Profile 和透明合成试听样例已实现；下一步接入真实音频生成/存储播放；项目 JSON 创作包导出已完成。
+4. 新增 `docs/future-work.md`，涵盖 API 对接清单和 Vercel 发布手册。
 
 ## 文档基线
 
@@ -94,6 +93,8 @@
 - `docs/requirements.md`：P0-01–26、AC-01–15。
 - `docs/technical-design.md`
 - `docs/2026-07-29-songdraft-foundation-design.md`
+- `docs/future-work.md`：待完成工作、COS/DeepSeek/音乐平台/Auth 对接清单及 Vercel 教程。
+- `docs/delivery-readiness.md`：需求映射、透明 Mock 边界、自动化验证和上线前门槛。
 
 ## 常用验证命令
 

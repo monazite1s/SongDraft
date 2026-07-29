@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { createAuthServerClient } from "@/infrastructure/auth/server";
+import { isMockAuthEnabled } from "@/infrastructure/auth/config";
 
 const credentialsSchema = z.object({
   email: z.string().email("请输入有效邮箱"),
@@ -11,6 +12,7 @@ const credentialsSchema = z.object({
 });
 
 export async function loginAction(formData: FormData) {
+  if (isMockAuthEnabled()) redirect("/");
   const credentials = credentialsSchema.parse(Object.fromEntries(formData));
   const supabase = await createAuthServerClient();
   const { error } = await supabase.auth.signInWithPassword(credentials);
@@ -19,6 +21,7 @@ export async function loginAction(formData: FormData) {
 }
 
 export async function registerAction(formData: FormData) {
+  if (isMockAuthEnabled()) redirect("/");
   const credentials = credentialsSchema.parse(Object.fromEntries(formData));
   const displayName = z.string().trim().min(1).max(40).parse(formData.get("displayName"));
   const supabase = await createAuthServerClient();
@@ -31,6 +34,7 @@ export async function registerAction(formData: FormData) {
 }
 
 export async function logoutAction() {
+  if (isMockAuthEnabled()) redirect("/login");
   const supabase = await createAuthServerClient();
   await supabase.auth.signOut();
   redirect("/login");

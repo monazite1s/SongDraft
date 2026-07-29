@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import type { AuthUser } from "@/modules/auth/types";
 import { Logo } from "@/components/ui/logo";
+import { logoutAction } from "@/modules/auth/actions";
 
 const navigation = [
   { href: "/", label: "首页", icon: Home },
@@ -26,6 +27,7 @@ export function AppShell({ user, children }: { user: AuthUser; children: React.R
         <div className="mt-auto rounded-xl bg-slate-50 p-3 text-sm">
           <p className="font-medium text-slate-900">{user.displayName}</p>
           <p className="mt-1 truncate text-xs text-slate-500">{user.email}</p>
+          <form action={logoutAction}><button className="mt-3 text-xs font-medium text-slate-500 hover:text-slate-900">退出登录</button></form>
         </div>
       </aside>
 

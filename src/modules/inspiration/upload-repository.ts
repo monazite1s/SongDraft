@@ -1,7 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 import { getDatabase } from "@/infrastructure/db/client";
 import { inspirationAssets, projects } from "@/infrastructure/db/schema";
+import { attachMockAsset, getProjectRepository } from "@/modules/projects/project-repository";
 
 export interface UploadAsset {
   id: string;
@@ -25,7 +26,7 @@ export class DrizzleUploadRepository implements UploadRepository {
     const [project] = await getDatabase()
       .select({ id: projects.id })
       .from(projects)
-      .where(and(eq(projects.id, projectId), eq(projects.ownerId, ownerId), eq(projects.status, "draft")))
+      .where(and(eq(projects.id, projectId), eq(projects.ownerId, ownerId), isNull(projects.deletedAt)))
       .limit(1);
     return Boolean(project);
   }
@@ -66,3 +67,19 @@ export class DrizzleUploadRepository implements UploadRepository {
     await getDatabase().update(inspirationAssets).set({ status: "ready", updatedAt: new Date() }).where(eq(inspirationAssets.id, uploadId));
   }
 }
+
+const mockUploads = new Map<string, UploadAsset & { kind: "audio" | "image" | "video"; originalName: string }>();
+
+export class MockUploadRepository implements UploadRepository {
+  async isOwnedProject(projectId: string, ownerId: string) { return Boolean(await getProjectRepository().findOwned(projectId, ownerId)); }
+  async createPending(asset: UploadAsset & { kind: "audio" | "image" | "video"; originalName: string }) { mockUploads.set(asset.id, asset); }
+  async findOwned(uploadId: string, ownerId: string) { const asset = mockUploads.get(uploadId); return asset?.ownerId === ownerId ? asset : null; }
+  async markReady(uploadId: string) {
+    const asset = mockUploads.get(uploadId);
+    if (!asset) return;
+    asset.status = "ready";
+    attachMockAsset({ projectId: asset.projectId, id: asset.id, kind: asset.kind, content: null, included: true, status: "ready", originalName: asset.originalName, mimeType: asset.mimeType, sizeBytes: asset.sizeBytes, objectKey: asset.objectKey });
+  }
+}
+
+export function getUploadRepository(): UploadRepository { return process.env.DATABASE_URL ? new DrizzleUploadRepository() : new MockUploadRepository(); }

@@ -53,6 +53,8 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // 自托管（腾讯云等）：产出 .next/standalone，可直接 `node server.js` 运行，无需在服务器装全部依赖。
+  output: "standalone",
   async headers() {
     return [
       {

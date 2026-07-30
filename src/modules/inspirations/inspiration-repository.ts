@@ -169,6 +169,7 @@ export class DrizzleInspirationRepository implements InspirationRepository {
         createdBy: ownerId,
       });
       const [updated] = await tx.update(inspirationRecords).set({
+        primaryKind: write.snapshot.primaryKind,
         title: write.snapshot.title || null,
         summary: write.summary,
         tags: write.snapshot.tags,
@@ -442,6 +443,7 @@ export class MockInspirationRepository implements InspirationRepository {
       return { record: structuredClone(record), versionCreated: false };
     }
     record.title = write.snapshot.title || null;
+    record.primaryKind = write.snapshot.primaryKind;
     record.summary = write.summary;
     record.tags = [...write.snapshot.tags];
     record.currentSnapshot = structuredClone(write.snapshot);

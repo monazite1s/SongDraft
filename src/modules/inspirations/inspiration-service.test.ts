@@ -41,15 +41,17 @@ describe("InspirationService", () => {
     expect(changed?.record.summary).toBe("雨夜街角");
   });
 
-  test("does not allow a record owner to silently switch its primary capture type", async () => {
+  test("allows one record to accumulate multiple content types (text + audio)", async () => {
     const service = new InspirationService(new MockInspirationRepository());
     const record = await service.create(owner, { snapshot: textSnapshot() });
 
-    await expect(service.autosave(owner.id, record.id, {
+    // 同一条灵感可以追加音频槽位，primaryKind 随当前主类型变化（不再 PRIMARY_KIND_IMMUTABLE）。
+    const merged = await service.autosave(owner.id, record.id, {
       snapshot: {
         primaryKind: "audio",
         title: "雨夜街角",
         tags: [],
+        text: textSnapshot("我数着水洼里的光").text,
         audio: {
           note: "副歌旋律",
           items: [{
@@ -59,7 +61,11 @@ describe("InspirationService", () => {
           }],
         },
       },
-    })).rejects.toMatchObject({ code: "PRIMARY_KIND_IMMUTABLE", status: 409 });
+    });
+    expect(merged?.versionCreated).toBe(true);
+    expect(merged?.record.primaryKind).toBe("audio");
+    // 文本槽位仍保留在同一条记录里。
+    expect(merged?.record.currentSnapshot.text?.content).toBe("我数着水洼里的光");
   });
 
   test("keeps records isolated by owner", async () => {

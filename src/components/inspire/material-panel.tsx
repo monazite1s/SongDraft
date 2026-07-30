@@ -1,6 +1,6 @@
 /**
  * 原料区：文本/歌词/指令与录音上传 UI；「精修歌词」经 onRefine 回调触发工作台 SSE。
- * 原始歌词与精修结果分轨：textarea 只绑用户原稿，精修版只展示 refinedLyrics。
+ * 原始歌词与精修结果分轨：textarea 绑用户原稿；精修版可继续人工编辑，写入 refinedLyrics。
  */
 'use client'
 
@@ -16,11 +16,11 @@ import {
   Square,
   Check,
   ImageDown,
+  Loader2,
+  X,
 } from 'lucide-react'
-import Image from 'next/image'
 import { cn } from '@/lib/utils'
 import type { InputKind } from '@/lib/inspire-data'
-import { AudioPlayer } from './audio-player'
 import { Field } from './ui'
 
 type Tab = InputKind extends never ? never : 'text' | 'audio' | 'image'
@@ -74,6 +74,16 @@ export interface MaterialDraft {
   instruction: string
 }
 
+/**
+ * 持久化素材资产：上传到 COS 后的可读签名 URL（刷新/切路由不失效）。
+ * 与灵感页的 CapturedMedia 不同——这里存的是真实 COS 对象，不走本地 blob。
+ */
+export interface MaterialAsset {
+  url: string
+  objectKey: string
+  name: string
+}
+
 function LyricsTab({
   draft,
   onChange,
@@ -83,6 +93,7 @@ function LyricsTab({
   refinementMessage,
   refinementError,
   onRefine,
+  onRefinedChange,
 }: {
   draft: MaterialDraft
   onChange: (next: MaterialDraft) => void
@@ -92,9 +103,11 @@ function LyricsTab({
   refinementMessage: string
   refinementError: string
   onRefine: () => void
+  /** 精修结果可编辑：人工改写后仍作为生成/落库的优先歌词。 */
+  onRefinedChange: (next: string) => void
 }) {
   const [view, setView] = useState<'refined' | 'original'>('refined')
-  const hasRefined = Boolean(refinedLyrics?.trim())
+  const originalText = originalLyrics || draft.lyrics
   return (
     <div className="space-y-4">
       <Field label="创作提示" hint="用于引导精修方向">
@@ -137,6 +150,7 @@ function LyricsTab({
             {(['refined', 'original'] as const).map((v) => (
               <button
                 key={v}
+                type="button"
                 onClick={() => setView(v)}
                 className={cn(
                   'rounded px-2 py-0.5 transition-colors',
@@ -150,29 +164,55 @@ function LyricsTab({
             ))}
           </div>
         </div>
-        {hasRefined || (view === 'original' && (originalLyrics || draft.lyrics).trim()) ? (
+        {view === 'refined' ? (
+          <textarea
+            rows={8}
+            value={refinedLyrics ?? ''}
+            placeholder="尚未精修：可先点「精修歌词」，或在此直接编写将用于生成的歌词"
+            disabled={isRefining}
+            onChange={(event) => onRefinedChange(event.target.value)}
+            className="w-full resize-y border-0 bg-transparent px-3 py-2.5 font-sans text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-wait disabled:opacity-70"
+          />
+        ) : originalText.trim() ? (
           <pre className="whitespace-pre-wrap px-3 py-2.5 font-sans text-sm leading-relaxed text-foreground">
-            {view === 'refined' ? refinedLyrics : (originalLyrics || draft.lyrics)}
+            {originalText}
           </pre>
         ) : (
-          <p className="px-3 py-2.5 text-sm text-muted-foreground">
-            {view === 'refined' ? '尚未精修，可直接生成简报，或先精修歌词' : '暂无原始歌词'}
-          </p>
+          <p className="px-3 py-2.5 text-sm text-muted-foreground">暂无原始歌词</p>
         )}
       </div>
     </div>
   )
 }
 
-function AudioTab() {
+function AudioTab({
+  asset,
+  onUploadAsset,
+  onChange,
+}: {
+  asset: MaterialAsset | null
+  onUploadAsset: (file: File, kind: 'audio' | 'image') => Promise<MaterialAsset>
+  onChange: (next: MaterialAsset | null) => void
+}) {
   const [mode, setMode] = useState<'record' | 'upload'>('upload')
-  const [file, setFile] = useState<{ name: string; url: string; durationLabel: string } | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [error, setError] = useState('')
 
-  function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+  async function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const next = event.target.files?.[0]
+    // 允许用户重复选同一文件（change 后清空 value）。
+    event.target.value = ''
     if (!next) return
-    if (file?.url) URL.revokeObjectURL(file.url)
-    setFile({ name: next.name, url: URL.createObjectURL(next), durationLabel: '—' })
+    setIsUploading(true)
+    setError('')
+    try {
+      const uploaded = await onUploadAsset(next, 'audio')
+      onChange(uploaded)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '上传失败，请重试')
+    } finally {
+      setIsUploading(false)
+    }
   }
 
   return (
@@ -181,6 +221,7 @@ function AudioTab() {
         {(['record', 'upload'] as const).map((m) => (
           <button
             key={m}
+            type="button"
             onClick={() => setMode(m)}
             className={cn(
               'flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-sm transition-colors',
@@ -200,18 +241,28 @@ function AudioTab() {
       </div>
 
       {mode === 'upload' ? (
-        <label className="flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-6 text-center transition-colors hover:bg-muted/60">
-          <Upload className="size-5 text-muted-foreground" />
+        <label className="flex aspect-[2/1] w-full cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-muted/30 px-4 text-center transition-colors hover:bg-muted/60">
+          {isUploading ? (
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          ) : (
+            <Upload className="size-5 text-muted-foreground" />
+          )}
           <span className="text-sm font-medium text-foreground">
-            拖拽或点击上传哼唱
+            {isUploading ? '正在上传到对象存储…' : '拖拽或点击上传哼唱'}
           </span>
           <span className="text-xs text-muted-foreground">
             支持 mp3 / wav / m4a，建议 30 秒内
           </span>
-          <input type="file" accept="audio/*" className="sr-only" onChange={onFileChange} />
+          <input
+            type="file"
+            accept="audio/*"
+            className="sr-only"
+            disabled={isUploading}
+            onChange={onFileChange}
+          />
         </label>
       ) : (
-        <div className="flex flex-col items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-6">
+        <div className="flex aspect-[2/1] w-full flex-col items-center justify-center gap-3 rounded-xl border border-border bg-muted/30 px-4">
           <button type="button" className="flex size-12 items-center justify-center rounded-full bg-destructive/10 text-destructive transition-colors hover:bg-destructive/20">
             <Circle className="size-5 fill-current" />
           </button>
@@ -223,12 +274,25 @@ function AudioTab() {
         </div>
       )}
 
-      {file && (
+      {error && (
+        <p role="alert" className="text-xs text-destructive">{error}</p>
+      )}
+
+      {asset && (
         <div className="rounded-lg border border-border bg-card p-3">
-          <p className="mb-2 text-xs font-medium text-foreground">
-            {file.name} · {file.durationLabel}
-          </p>
-          <AudioPlayer durationLabel={file.durationLabel} seed={3} bars={44} />
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="truncate text-xs font-medium text-foreground">{asset.name}</p>
+            <button
+              type="button"
+              onClick={() => onChange(null)}
+              className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted"
+            >
+              <X className="size-3" />
+              移除
+            </button>
+          </div>
+          {/* 原生 <audio controls> 直接播放 COS 签名 URL（持久，刷新/切路由不失效）。 */}
+          <audio controls src={asset.url} className="w-full" />
         </div>
       )}
     </div>
@@ -236,67 +300,96 @@ function AudioTab() {
 }
 
 function ImageTab({
+  asset,
   coverSet,
   onSetCover,
+  onUploadAsset,
+  onChange,
 }: {
+  asset: MaterialAsset | null
   coverSet: boolean
   onSetCover: () => void
+  onUploadAsset: (file: File, kind: 'audio' | 'image') => Promise<MaterialAsset>
+  onChange: (next: MaterialAsset | null) => void
 }) {
-  const [image, setImage] = useState<{ name: string; url: string } | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [error, setError] = useState('')
 
-  function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+  async function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const next = event.target.files?.[0]
+    event.target.value = ''
     if (!next) return
-    if (image?.url) URL.revokeObjectURL(image.url)
-    setImage({ name: next.name, url: URL.createObjectURL(next) })
+    setIsUploading(true)
+    setError('')
+    try {
+      const uploaded = await onUploadAsset(next, 'image')
+      onChange(uploaded)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '上传失败，请重试')
+    } finally {
+      setIsUploading(false)
+    }
   }
 
   return (
     <div className="space-y-4">
-      {image ? (
-        <div className="overflow-hidden rounded-lg border border-border">
-          <div className="relative aspect-video w-full">
-            <Image
-              src={image.url}
-              alt="已上传的参考图像"
-              fill
-              unoptimized
-              className="object-cover"
-            />
+      {asset ? (
+        <div className="overflow-hidden rounded-xl border border-border">
+          <div className="aspect-[2/1] w-full overflow-hidden">
+            {/* COS 签名 URL 可直接用原生 <img> 预览（持久，刷新不失效）。 */}
+            <img src={asset.url} alt="已上传的参考图像" className="h-full w-full object-cover" />
           </div>
           <div className="flex items-center justify-between gap-2 border-t border-border bg-card px-3 py-2">
-            <span className="truncate text-xs text-muted-foreground">{image.name}</span>
-            <button
-              type="button"
-              onClick={onSetCover}
-              className={cn(
-                'flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-colors',
-                coverSet
-                  ? 'border-brand/30 bg-brand-muted text-brand'
-                  : 'border-border bg-background text-foreground hover:bg-muted',
-              )}
-            >
-              {coverSet ? (
-                <>
-                  <Check className="size-3.5" />
-                  已设为封面
-                </>
-              ) : (
-                <>
-                  <ImageDown className="size-3.5" />
-                  设为封面
-                </>
-              )}
-            </button>
+            <span className="truncate text-xs text-muted-foreground">{asset.name}</span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={onSetCover}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-colors',
+                  coverSet
+                    ? 'border-brand/30 bg-brand-muted text-brand'
+                    : 'border-border bg-background text-foreground hover:bg-muted',
+                )}
+              >
+                {coverSet ? (
+                  <>
+                    <Check className="size-3.5" />
+                    已设为封面
+                  </>
+                ) : (
+                  <>
+                    <ImageDown className="size-3.5" />
+                    设为封面
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => onChange(null)}
+                className="flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted"
+              >
+                <X className="size-3" />
+                移除
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
 
-      <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-6 text-center text-sm text-muted-foreground transition-colors hover:bg-muted/60">
-        <Upload className="size-4" />
-        {image ? '添加更多图像或视频' : '拖拽或点击上传图像 / 视频'}
-        <input type="file" accept="image/*,video/*" className="sr-only" onChange={onFileChange} />
+      <label className="flex aspect-[2/1] w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-muted/30 px-4 text-center text-sm text-muted-foreground transition-colors hover:bg-muted/60">
+        {isUploading ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          <Upload className="size-4" />
+        )}
+        {isUploading ? '正在上传到对象存储…' : asset ? '替换图像或视频' : '拖拽或点击上传图像 / 视频'}
+        <input type="file" accept="image/*,video/*" className="sr-only" disabled={isUploading} onChange={onFileChange} />
       </label>
+
+      {error && (
+        <p role="alert" className="text-xs text-destructive">{error}</p>
+      )}
     </div>
   )
 }
@@ -314,6 +407,12 @@ export function MaterialPanel({
   refinementMessage,
   refinementError,
   onRefine,
+  onRefinedChange,
+  hummingAsset,
+  referenceImage,
+  onUploadAsset,
+  onHummingChange,
+  onImageChange,
   footer,
 }: {
   selectedInputs: InputKind[]
@@ -328,6 +427,15 @@ export function MaterialPanel({
   refinementMessage: string
   refinementError: string
   onRefine: () => void
+  onRefinedChange: (next: string) => void
+  /** 哼唱素材（COS 签名 URL，持久化）；null 表示未上传或已移除。 */
+  hummingAsset: MaterialAsset | null
+  /** 参考图像（COS 签名 URL，持久化）；null 表示未上传或已移除。 */
+  referenceImage: MaterialAsset | null
+  /** 上传编排：workspace 负责 intent → PUT → complete，返回 COS 可读 URL。 */
+  onUploadAsset: (file: File, kind: 'audio' | 'image') => Promise<MaterialAsset>
+  onHummingChange: (next: MaterialAsset | null) => void
+  onImageChange: (next: MaterialAsset | null) => void
   footer?: React.ReactNode
 }) {
   const [tab, setTab] = useState<Tab>('text')
@@ -400,11 +508,24 @@ export function MaterialPanel({
             refinementMessage={refinementMessage}
             refinementError={refinementError}
             onRefine={onRefine}
+            onRefinedChange={onRefinedChange}
           />
         )}
-        {tab === 'audio' && <AudioTab />}
+        {tab === 'audio' && (
+          <AudioTab
+            asset={hummingAsset}
+            onUploadAsset={onUploadAsset}
+            onChange={onHummingChange}
+          />
+        )}
         {tab === 'image' && (
-          <ImageTab coverSet={coverSet} onSetCover={onSetCover} />
+          <ImageTab
+            asset={referenceImage}
+            coverSet={coverSet}
+            onSetCover={onSetCover}
+            onUploadAsset={onUploadAsset}
+            onChange={onImageChange}
+          />
         )}
       </div>
       {footer && <div className="shrink-0 border-t border-border bg-card p-4">{footer}</div>}

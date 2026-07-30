@@ -5,7 +5,6 @@
  */
 import { notFound } from "next/navigation";
 
-import { Sidebar } from "@/components/inspire/sidebar";
 import { ProjectDetailTabs } from "@/components/works/project-detail-tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/inspire/ui";
@@ -51,9 +50,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
   const coverLetter = (project.title || "作").trim().charAt(0).toUpperCase();
 
   return (
-    <div className="flex h-screen bg-background">
-      <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {/* Header */}
         <div className="border-b border-border bg-background px-8 py-3 flex items-center justify-between">
           <Link href="/works">
@@ -106,6 +103,5 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
           inspirations={inspirations}
         />
       </div>
-    </div>
   );
 }

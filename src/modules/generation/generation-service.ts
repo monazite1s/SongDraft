@@ -27,16 +27,22 @@ import { getProjectRepository } from "@/modules/projects/project-repository";
 import { DomainError } from "@/shared/errors/domain-error";
 import type { DemoCandidate, DemoVersionView, GenerationResult, RecentSongItem, RestoreVersionResult, SaveCandidatesResult } from "./generation-types";
 import { getMusicGenerator, type GeneratedDemo, type MusicGenerationInput } from "./music-generator";
+import { getVisionAnalyzer } from "@/modules/ai/vision-analyzer";
 import { routeGeneration } from "./provider-router";
 import { PROMPT_REGISTRY, buildMusicPrompt } from "@/modules/ai/prompts";
 import type { BriefPayload } from "@/modules/ai/brief-generator";
 import { isRealCosInUse, resolveAudioUrl, transferAudioToStorage } from "@/infrastructure/storage/transfer";
+import { getObjectStorage } from "@/infrastructure/storage/factory";
 
 const generateSchema = z.object({
   projectId: z.string().uuid(),
   briefId: z.string().uuid(),
   lyrics: z.string().trim().min(1).max(10_000).optional(),
   hummingAssetId: z.string().uuid().nullable().optional(),
+  /** 哼唱/参考音频的 COS objectKey；存在时走 music-cover 双通道生成。 */
+  hummingObjectKey: z.string().min(1).max(512).optional(),
+  /** 参考图像的 COS objectKey；存在时走 GLM-4V 图生文，注入音乐 prompt 视觉意象。 */
+  imageObjectKey: z.string().min(1).max(512).optional(),
   idempotencyKey: z.string().min(8).max(120).optional(),
 });
 
@@ -163,6 +169,26 @@ export class GenerationService {
       : readBriefPayload(input.briefId, input.projectId);
     const theme = briefPayload.theme;
     const quantity = briefPayload.quantity;
+    // 双通道生成：带哼唱/参考音频（COS objectKey）时，签发预签名 HTTPS URL 作为
+    // music-cover 的 audio_url；失败回退纯文本生成（不中断）。无 COS 时无法提供可拉取 URL，跳过。
+    let referenceAudioUrl: string | null = null;
+    if (input.hummingObjectKey && isRealCosInUse()) {
+      try {
+        referenceAudioUrl = await getObjectStorage().createDownload(input.hummingObjectKey, 7_200);
+      } catch (error) {
+        console.warn("[generation] 签名参考音频 URL 失败，回退纯文本生成：", error);
+      }
+    }
+    // 三模态：参考图像 → GLM-4V 图生文 → 注入音乐 prompt「视觉意象」（与简报 visualReferences 合并）。失败跳过，不中断。
+    let visionText: string | null = null;
+    if (input.imageObjectKey && isRealCosInUse()) {
+      try {
+        const imageUrl = await getObjectStorage().createDownload(input.imageObjectKey, 7_200);
+        visionText = await getVisionAnalyzer().analyzeImage(imageUrl);
+      } catch (error) {
+        console.warn("[generation] 图像视觉理解失败，跳过视觉意象：", error);
+      }
+    }
     const musicInput: MusicGenerationInput = {
       projectId: project.id,
       lyrics,
@@ -175,12 +201,17 @@ export class GenerationService {
         extraPrompt: briefPayload.extraPrompt,
         instruments: briefPayload.instruments,
         melodyFeatures: briefPayload.melodyFeatures,
-        visualReferences: briefPayload.visualReferences,
+        // 视觉意象：简报既有视觉参考 + GLM 图生文（三模态汇聚）。
+        visualReferences: [briefPayload.visualReferences, visionText]
+          .map((s) => s?.trim())
+          .filter(Boolean)
+          .join("；"),
         priority: briefPayload.priority,
         outputType: briefPayload.outputType,
       }),
       creativeContext: project.creativeContext,
       hummingAssetId: input.hummingAssetId,
+      referenceAudioUrl,
     };
     // 音乐生成在事务外完成，避免长 HTTP 调用占用数据库事务。
     const demos = await generateDemos(quantity, musicInput);
@@ -252,9 +283,12 @@ export class GenerationService {
             executionKind: demo.executionKind,
             // 落库 prompt 版本（PROMPT_REGISTRY.music.version）与模型名，供审计与回放。
             promptVersion: PROMPT_REGISTRY.music.version,
-            modelVersion: process.env.MINIMAX_MUSIC_MODEL ?? "music-2.6",
+            // 落库实际使用的模型：带参考音频 → music-cover（付费账号默认；免费账号 env 设 music-cover-free）；否则 music-2.6。
+            modelVersion: referenceAudioUrl
+              ? (process.env.MINIMAX_MUSIC_COVER_MODEL ?? "music-cover")
+              : (process.env.MINIMAX_MUSIC_MODEL ?? "music-2.6"),
             // cosObjectKey 记录真实 COS key，读取时据此生成签名 URL；audioUrl 保留 MiniMax 临时 URL 作 fallback。
-            metadata: { hasAudio: Boolean(demo.audioUrl), audioUrl: demo.audioUrl, cosObjectKey: cosKey, providerLabel: demo.providerLabel, outputType: routeOutputType, extraPrompt: briefPayload.extraPrompt, quantity },
+            metadata: { hasAudio: Boolean(demo.audioUrl), audioUrl: demo.audioUrl, cosObjectKey: cosKey, providerLabel: demo.providerLabel, outputType: routeOutputType, extraPrompt: briefPayload.extraPrompt, quantity, visionUsed: Boolean(visionText) },
           };
         }),
       ).returning();

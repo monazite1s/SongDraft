@@ -137,3 +137,17 @@
     display: none;
   }
 }
+
+/*
+ * 生成 Demo 的不确定进度条（需求 #8）：单次 await 无真实进度，
+ * 用高亮块在轨道内左右往返表达「进行中」。供 Tailwind v4 任意值
+ * `animate-[indeterminate-progress_1.4s_ease-in-out_infinite]` 解析。
+ */
+@keyframes indeterminate-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}

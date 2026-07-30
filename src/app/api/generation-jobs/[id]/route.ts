@@ -11,7 +11,7 @@ import { and, eq } from "drizzle-orm";
 
 import { getCurrentUser } from "@/modules/auth/queries";
 import { getDatabase } from "@/infrastructure/db/client";
-import { generationCandidates, generationJobs } from "@/infrastructure/db/schema";
+import { generationCandidates, generationJobs, projects } from "@/infrastructure/db/schema";
 import type { DemoCandidate, GenerationResult, GenerationStatus } from "@/modules/generation/generation-types";
 import { DomainError } from "@/shared/errors/domain-error";
 import { apiError, apiSuccess } from "@/shared/http/api-response";
@@ -46,9 +46,19 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     // mock 模式：先在 mockResults 按 jobId 命中（POST generate 落库的完整结果）。
     if (!process.env.DATABASE_URL) {
       const results = songDraftGenerationStore.__songDraftGenerationResults;
+      const candidates = songDraftGenerationStore.__songDraftCandidates;
       if (results) {
         for (const result of results.values()) {
-          if (result.jobId === id) return apiSuccess(result);
+          if (result.jobId === id) {
+            // 归属校验：mock 结果本身无 ownerId 字段，这里通过候选 store 交叉验证——
+            // 该 job 下必须存在至少一条归属当前用户的候选，否则视为无权访问。
+            const ownsJob = result.candidates.some((candidate) => {
+              const entry = candidates?.get(candidate.id);
+              return Boolean(entry) && entry!.ownerId === user.id;
+            });
+            if (!ownsJob) throw new DomainError("NOT_FOUND", 404, "生成任务不存在");
+            return apiSuccess(result);
+          }
         }
       }
       // 回退：按 jobId 归属的候选重建视图（mockCandidates 在保存后仍保留 job 归属信息有限，
@@ -56,19 +66,21 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       throw new DomainError("NOT_FOUND", 404, "生成任务不存在");
     }
 
-    // 真实模式：查 job + 归属候选（ownerId 校验）。
+    // 真实模式：查 job + join projects，强校验 projects.ownerId = user.id（防越权）。
     const db = getDatabase();
-    const [job] = await db.select().from(generationJobs).where(eq(generationJobs.id, id)).limit(1);
-    if (!job) throw new DomainError("NOT_FOUND", 404, "生成任务不存在");
+    const [owned] = await db
+      .select({ job: generationJobs })
+      .from(generationJobs)
+      .innerJoin(projects, eq(projects.id, generationJobs.projectId))
+      .where(and(eq(generationJobs.id, id), eq(projects.ownerId, user.id)))
+      .limit(1);
+    if (!owned) throw new DomainError("NOT_FOUND", 404, "生成任务不存在");
+    const job = owned.job;
 
     const candidateRows = await db
       .select()
       .from(generationCandidates)
-      .where(and(eq(generationCandidates.jobId, id), eq(generationCandidates.ownerId, user.id), eq(generationCandidates.projectId, job.projectId)));
-    // 归属校验：若该用户在该 job 下无候选，且 job 的项目不属于该用户，视为无权访问。
-    if (candidateRows.length === 0) {
-      // 通过 projects 归属隐式校验：job 存在但无候选可能为异步进行中，仍返回状态视图。
-    }
+      .where(and(eq(generationCandidates.jobId, id), eq(generationCandidates.projectId, job.projectId)));
 
     const result: GenerationResult = {
       jobId: job.id,

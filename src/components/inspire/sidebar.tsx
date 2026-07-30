@@ -12,9 +12,11 @@ import {
   Cpu,
   Plus,
   LifeBuoy,
+  LogOut,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { loadLastProject } from '@/lib/client-draft-store'
+import { logoutAction } from '@/modules/auth/actions'
 
 type RecentSong = {
   versionId: string
@@ -72,6 +74,8 @@ export function Sidebar() {
   }, [pathname])
 
   // 最近歌曲 + 当前用户均为独立请求（非派生 state），loading 态在 effect 内 setState 合规。
+  // 依赖 pathname：切路由时静默后台刷新（Sidebar 组件本身不重挂载，无闪烁；仅数据更新）。
+  // 解决登入竞态（mount 早于 session 就绪 → 永远「未登录」）与生成歌曲后「最近歌曲」不刷新。
   useEffect(() => {
     fetch('/api/works/recent-songs?limit=5')
       .then(async (r) => {
@@ -95,7 +99,7 @@ export function Sidebar() {
       .catch(() => {
         /* 取数失败保持 null，用户区显示未登录态 */
       })
-  }, [])
+  }, [pathname])
 
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
@@ -192,20 +196,39 @@ export function Sidebar() {
         <div className="mt-1 flex items-center gap-2.5 rounded-lg px-2 py-1.5">
           {profile ? (
             <>
-              <div className="flex size-8 items-center justify-center rounded-full bg-brand-muted text-xs font-semibold text-brand">
-                {(profile.displayName || '?').slice(0, 1)}
-              </div>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-sidebar-foreground">
-                  {profile.displayName || '未命名用户'}
-                </p>
-                <p className="truncate text-xs text-muted-foreground" title={profile.email}>
-                  {profile.email || ''}
-                </p>
-              </div>
+              <Link
+                href="/settings"
+                className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-0 py-0.5 transition-colors hover:opacity-80"
+                title="点击进入设置"
+              >
+                <div className="flex size-8 items-center justify-center rounded-full bg-brand-muted text-xs font-semibold text-brand">
+                  {(profile.displayName || '?').slice(0, 1)}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-sidebar-foreground">
+                    {profile.displayName || '未命名用户'}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground" title={profile.email}>
+                    {profile.email || ''}
+                  </p>
+                </div>
+              </Link>
+              <form action={logoutAction} title="退出登录">
+                <button
+                  type="submit"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+                  aria-label="退出登录"
+                >
+                  <LogOut className="size-4" />
+                </button>
+              </form>
             </>
           ) : (
-            <>
+            <Link
+              href="/login"
+              className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-0 py-0.5 transition-colors hover:opacity-80"
+              title="点击登录"
+            >
               <div className="flex size-8 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
                 ？
               </div>
@@ -213,9 +236,9 @@ export function Sidebar() {
                 <p className="truncate text-sm font-medium text-sidebar-foreground">
                   未登录
                 </p>
-                <p className="truncate text-xs text-muted-foreground">本地访客</p>
+                <p className="truncate text-xs text-muted-foreground">点击登录</p>
               </div>
-            </>
+            </Link>
           )}
         </div>
       </div>

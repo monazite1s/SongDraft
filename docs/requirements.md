@@ -24,7 +24,11 @@
 ## 当前真实 Provider
 
 - 文本与歌词：DeepSeek V4 Flash，`POST /chat/completions`。
-- 音乐：MiniMax Music 2.6，`POST /v1/music_generation`。
+- 图像（图生文）：智谱 GLM-4V（`GLM_VISION_MODEL`，默认免费 `glm-4v-flash`，`ZHIPU_API_KEY`），`POST /api/paas/v4/chat/completions`；参考图经 COS 预签名 URL 作为 `image_url` 传入，输出 ≤120 字音乐意象，生成时注入音乐 prompt「视觉意象」槽（三模态汇聚）。
+- 音乐：MiniMax `/v1/music_generation`，按素材自动路由：
+  - 纯文本（无参考音频）→ `music-2.6`（`MINIMAX_MUSIC_MODEL`，默认 `music-2.6`）。
+  - 文本 + 音频双通道（带哼唱/参考音频）→ `music-cover`（`MINIMAX_MUSIC_COVER_MODEL`，默认付费 `music-cover`；免费账号可设 `music-cover-free`，但 Token Plan 账号不支持 `-free` 系列），
+    参考音频经 COS 预签名 URL 作为 `audio_url` 传入；歌词 ≥10 字时直传，否则由 MiniMax ASR 从参考音频提取。
 
 ## Mock 边界
 
@@ -36,6 +40,5 @@
 
 - DeepSeek Token 级 SSE 直通与匿名成本统计。
 - MiniMax 音频自动转存私有 COS。
-- MiniMax Music Cover 哼唱预处理。
-- Prompt 版本线上评估和回归数据集。
+- music-cover 参考音频格式兼容（浏览器录制为 webm/opus，MiniMax 列举 mp3/wav/flac；webm 可能被拒收，需服务端转码）。
 - 真实 Provider 的限流、告警和调用追踪。

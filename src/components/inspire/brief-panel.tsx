@@ -18,21 +18,19 @@ import {
   Layers,
   Save,
   Crown,
-  GitCompare,
   ChevronDown,
   Sparkles,
+  Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   OUTPUT_TYPES,
-  PROVIDERS,
   coverFromTitle,
   type CreativeBrief,
   type DemoCandidate,
   type OutputType,
 } from '@/lib/inspire-data'
 import { QUANTITIES, type Busy, type Phase } from './action-column'
-import { AudioPlayer } from './audio-player'
 import { Button } from '@/components/ui/button'
 import { Chip, RadioTags } from './ui'
 
@@ -421,63 +419,6 @@ function CandidateCard({
   )
 }
 
-function CompareColumn({
-  c,
-  isMain,
-  onSetMain,
-}: {
-  c: DemoCandidate
-  isMain: boolean
-  onSetMain: () => void
-}) {
-  const output = OUTPUT_TYPES.find((o) => o.id === c.outputType)!
-  return (
-    <div
-      className={cn(
-        'flex flex-col rounded-xl border bg-card p-2.5',
-        isMain ? 'border-brand/40 ring-1 ring-brand/20' : 'border-border',
-      )}
-    >
-      <CoverPlaceholder
-        title={c.title}
-        id={c.id}
-        className="aspect-square w-full overflow-hidden rounded-lg border border-border"
-        letterClassName="text-3xl"
-      />
-      <h4 className="mt-2 truncate text-xs font-medium text-foreground">
-        {c.title}
-      </h4>
-      <dl className="mt-2 space-y-1 text-[11px]">
-        {[
-          ['类型', output.label],
-          ['时长', c.duration],
-        ].map(([k, v]) => (
-          <div key={k} className="flex justify-between">
-            <dt className="text-muted-foreground">{k}</dt>
-            <dd className="text-foreground">{v}</dd>
-          </div>
-        ))}
-      </dl>
-      <div className="mt-2">
-        {c.audioUrl ? <audio controls preload="metadata" src={c.audioUrl} className="h-9 w-full" aria-label={`${c.title} 播放器`} /> : <AudioPlayer durationLabel={c.duration} seed={c.id.charCodeAt(1)} bars={20} />}
-      </div>
-      <button
-        onClick={onSetMain}
-        disabled={isMain}
-        className={cn(
-          'mt-2 flex items-center justify-center gap-1 rounded-lg py-1.5 text-[11px] font-medium transition-colors',
-          isMain
-            ? 'cursor-default bg-muted text-muted-foreground'
-            : 'bg-primary text-primary-foreground hover:bg-primary/90',
-        )}
-      >
-        <Crown className="size-3" />
-        {isMain ? '主版本' : '设为主版本'}
-      </button>
-    </div>
-  )
-}
-
 function ResultsSection({
   busy,
   quantity,
@@ -503,7 +444,6 @@ function ResultsSection({
   onSelectedIdsChange: (ids: string[]) => void
 }) {
   const [collapsed, setCollapsed] = useState(false)
-  const [compare, setCompare] = useState(false)
 
   function toggleSelected(id: string) {
     onSelectedIdsChange(selectedIds.includes(id) ? selectedIds.filter((item) => item !== id) : [...selectedIds, id])
@@ -524,50 +464,23 @@ function ResultsSection({
       }
     >
       <div className="space-y-3 p-4">
-        <div className="flex items-center justify-between">
-          <p className="text-[11px] text-muted-foreground">
-            基于创意简报生成，可对比后设为主版本
-          </p>
-          <button
-            onClick={() => setCompare((v) => !v)}
-            className={cn(
-              'flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors',
-              compare
-                ? 'border-brand/30 bg-brand-muted text-brand'
-                : 'border-border bg-background text-foreground hover:bg-muted',
-            )}
-          >
-            <GitCompare className="size-3.5" />
-            A/B 对比
-          </button>
-        </div>
+        <p className="text-[11px] text-muted-foreground">
+          基于创意简报生成，可将喜欢的设为主版本
+        </p>
 
         {busy === 'generate' ? (
-          <div className="grid gap-3">
-            {Array.from({ length: Math.min(quantity, 3) }).map((_, i) => (
-              <div key={i} className="rounded-xl border border-border bg-card p-3">
-                <div className="flex gap-3">
-                  <Skeleton className="size-16 rounded-lg" />
-                  <div className="flex-1 space-y-2">
-                    <Skeleton className="h-4 w-2/3" />
-                    <Skeleton className="h-3 w-1/2" />
-                    <Skeleton className="h-3 w-1/3" />
-                  </div>
-                </div>
-                <Skeleton className="mt-3 h-9 w-full" />
-              </div>
-            ))}
-          </div>
-        ) : compare ? (
-          <div className="grid grid-cols-2 gap-3">
-            {candidates.slice(0, 2).map((c) => (
-              <CompareColumn
-                key={c.id}
-                c={c}
-                isMain={c.id === mainId}
-                onSetMain={() => onSetMain(c.id)}
-              />
-            ))}
+          <div className="rounded-xl border border-border bg-card p-5">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <Loader2 className="size-4 animate-spin text-brand" />
+              生成中…
+            </div>
+            {/* 不确定进度条：单次 await 无真实进度，用高亮块左右往返表达「进行中」。 */}
+            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div className="h-full w-1/3 animate-[indeterminate-progress_1.4s_ease-in-out_infinite] rounded-full bg-brand" />
+            </div>
+            <p className="mt-2.5 text-[11px] text-muted-foreground">
+              MiniMax 生成约需 30–120 秒
+            </p>
           </div>
         ) : (
           <div className="grid gap-3">
@@ -667,7 +580,9 @@ export function BriefPanel({
   onSelectedIdsChange: (ids: string[]) => void
 }) {
   const [briefCollapsed, setBriefCollapsed] = useState(false)
-  const resultsReady = phase === 'results'
+  // 有候选就展示生成结果：不能只靠 phase==='results'——重新生成简报会把 phase 打回 brief，
+  // 切路由恢复时也可能 phase 与 candidates 不同步，导致 Demo 还在 state 里却不渲染。
+  const resultsReady = phase === 'results' || candidates.length > 0
   const [prevResultsReady, setPrevResultsReady] = useState(resultsReady)
 
   // 生成成功后自动收起创意简报（SPEC §0），用户仍可手动展开。
@@ -677,7 +592,7 @@ export function BriefPanel({
     if (resultsReady) setBriefCollapsed(true)
   }
 
-  if (phase === 'idle' && busy !== 'analyze') {
+  if (phase === 'idle' && busy !== 'analyze' && candidates.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center px-6 text-center">
         <div className="flex size-12 items-center justify-center rounded-full bg-muted">

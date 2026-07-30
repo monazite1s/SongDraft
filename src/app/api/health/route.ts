@@ -45,5 +45,13 @@ export async function GET() {
   }
 
   const ok = checks.db === "ok" && checks.storage === "ok";
+
+  // 生产环境脱敏：失败只返回通用 { ok: false } + 503，避免泄露 DB/存储内部架构与错误文案。
+  if (process.env.NODE_ENV === "production") {
+    return ok
+      ? NextResponse.json({ ok: true, time })
+      : NextResponse.json({ ok: false }, { status: 503 });
+  }
+
   return NextResponse.json({ ok, time, mode: "live", checks }, { status: ok ? 200 : 503 });
 }

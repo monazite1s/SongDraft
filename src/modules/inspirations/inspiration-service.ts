@@ -69,9 +69,7 @@ export class InspirationService {
     const { snapshot, reason } = autosaveInspirationRecordSchema.parse(input);
     const existing = await this.repository.findOwned(recordId, ownerId);
     if (!existing) throw new DomainError("NOT_FOUND", 404, "灵感记录不存在或无权访问");
-    if (existing.primaryKind !== snapshot.primaryKind) {
-      throw new DomainError("PRIMARY_KIND_IMMUTABLE", 409, "不能改变已有灵感记录的主类型");
-    }
+    // 一条灵感可同时含 text/audio/image 多个槽位；primaryKind 随当前主类型变化，不再锁定。
     const result = await this.repository.saveSnapshot(recordId, ownerId, this.toSnapshotWrite(snapshot, reason));
     if (!result) throw new DomainError("NOT_FOUND", 404, "灵感记录不存在或无权访问");
     return result;

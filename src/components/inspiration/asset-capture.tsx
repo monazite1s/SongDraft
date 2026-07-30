@@ -55,5 +55,35 @@ export function AssetCapture({ projectId, kind, onUploaded }: { projectId: strin
 
   function stopRecording() { recorder.current?.stop(); recorder.current = null; setIsRecording(false); }
   const accept = kind === "audio" ? ".mp3,.m4a,.wav,.webm,audio/*" : "image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm";
-  return <div className="mt-3 rounded-xl border border-dashed border-slate-300 p-4 text-center"><input ref={fileInput} onChange={(event) => void selectFile(event.target.files?.[0])} accept={accept} className="sr-only" type="file" />{kind === "audio" ? <button type="button" disabled={isUploading} onClick={isRecording ? stopRecording : startRecording} className={`mx-auto inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium ${isRecording ? "bg-rose-600 text-white" : "bg-indigo-600 text-white"}`}>{isRecording ? <><Square className="size-4" />结束录制</> : <><Mic className="size-4" />录制哼唱</>}</button> : null}<button type="button" disabled={isUploading} onClick={() => fileInput.current?.click()} className={`${kind === "audio" ? "mt-2" : ""} mx-auto flex items-center gap-2 text-sm font-medium text-indigo-600 disabled:text-slate-400`}>{isUploading ? <LoaderCircle className="size-4 animate-spin" /> : kind === "audio" ? <FileUp className="size-4" /> : <UploadCloud className="size-4" />}{isUploading ? "上传与校验中…" : kind === "audio" ? "或上传音频文件" : "选择图片或视频"}</button>{error ? <p role="alert" className="mt-3 text-xs text-rose-600">{error}</p> : <p className="mt-2 text-xs text-slate-500">{kind === "audio" ? "支持 mp3、m4a、wav、webm，最大 20MB" : "图片最大 10MB；视频最大 100MB"}</p>}</div>;
+  return (
+    <div className="mt-3 flex aspect-[2/1] w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-muted/30 px-4 text-center">
+      <input ref={fileInput} onChange={(event) => void selectFile(event.target.files?.[0])} accept={accept} className="sr-only" type="file" />
+      {kind === "audio" ? (
+        <button
+          type="button"
+          disabled={isUploading}
+          onClick={isRecording ? stopRecording : startRecording}
+          className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium ${isRecording ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground"}`}
+        >
+          {isRecording ? <><Square className="size-4" />结束录制</> : <><Mic className="size-4" />录制哼唱</>}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        disabled={isUploading}
+        onClick={() => fileInput.current?.click()}
+        className="inline-flex items-center gap-2 text-sm font-medium text-brand disabled:text-muted-foreground"
+      >
+        {isUploading ? <LoaderCircle className="size-4 animate-spin" /> : kind === "audio" ? <FileUp className="size-4" /> : <UploadCloud className="size-4" />}
+        {isUploading ? "上传与校验中…" : kind === "audio" ? "或上传音频文件" : "选择图片或视频"}
+      </button>
+      {error ? (
+        <p role="alert" className="text-xs text-destructive">{error}</p>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          {kind === "audio" ? "支持 mp3、m4a、wav、webm，最大 20MB" : "图片最大 10MB；视频最大 100MB"}
+        </p>
+      )}
+    </div>
+  );
 }

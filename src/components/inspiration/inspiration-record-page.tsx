@@ -3,7 +3,7 @@
 /**
  * 灵感记录页主流程（docs/SPEC.md）：先创建/更新灵感记录，再上传媒体，最后保存到新项目或已有项目。
  */
-import { AudioLines, Check, ChevronDown, FileText, Image as ImageIcon, Lightbulb, Plus, Sparkles, Wand2 } from "lucide-react";
+import { AudioLines, Check, ChevronDown, FileText, Image as ImageIcon, Lightbulb, Plus, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { InspirationSnapshot } from "@/modules/inspirations/inspiration-schema";
@@ -26,10 +26,19 @@ type Enrichment = {
   mode: "real" | "simulated";
 };
 
-/** 灵感页会话草稿：同 tab 切到制作台再回来时回填，避免纯 useState 随卸载丢失。 */
+/**
+ * 灵感页会话草稿：同 tab 切到制作台再回来时回填，避免纯 useState 随卸载丢失。
+ * 一条灵感 = 一个记录，含 text/audio/image 三个可选槽位；切 tab 只是换录入面板，
+ * 底下是同一条记录的不同内容槽位，保存到项目时一次性导入全部已录入内容。
+ */
 type InspirationSessionDraft = {
   kind: CaptureKind;
+  /** 单条灵感记录 id（三槽位共用，不再按类型拆分）。 */
   recordId: string | null;
+  audioAssets: CapturedMedia[];
+  audioNote: string;
+  imageAssets: CapturedMedia[];
+  imageNote: string;
   title: string;
   text: string;
   textType: "lyric" | "concept" | "story" | "melody_note" | "arrangement" | "other";
@@ -37,8 +46,6 @@ type InspirationSessionDraft = {
   speedFeel: "slow" | "medium" | "fast" | "unknown";
   soundHints: string;
   referenceWorks: string;
-  note: string;
-  assets: CapturedMedia[];
 };
 
 const kindTabs = [
@@ -53,7 +60,12 @@ const moodOptions = ["治愈", "克制", "明亮", "迷离", "热烈", "怀旧"]
 export function InspirationRecordPage() {
   const [boot] = useState(() => loadClientDraft<InspirationSessionDraft>(DRAFT_KEYS.inspiration));
   const [kind, setKind] = useState<CaptureKind>(boot?.kind ?? "audio");
+  // 单条灵感记录 id：三槽位共用，切 tab 不变。
   const [recordId, setRecordId] = useState<string | null>(boot?.recordId ?? null);
+  const [audioAssets, setAudioAssets] = useState<CapturedMedia[]>(boot?.audioAssets ?? []);
+  const [audioNote, setAudioNote] = useState(boot?.audioNote ?? "");
+  const [imageAssets, setImageAssets] = useState<CapturedMedia[]>(boot?.imageAssets ?? []);
+  const [imageNote, setImageNote] = useState(boot?.imageNote ?? "");
   const [title, setTitle] = useState(boot?.title ?? "");
   const [text, setText] = useState(boot?.text ?? "");
   const [textType, setTextType] = useState<"lyric" | "concept" | "story" | "melody_note" | "arrangement" | "other">(boot?.textType ?? "lyric");
@@ -61,8 +73,6 @@ export function InspirationRecordPage() {
   const [speedFeel, setSpeedFeel] = useState<"slow" | "medium" | "fast" | "unknown">(boot?.speedFeel ?? "unknown");
   const [soundHints, setSoundHints] = useState(boot?.soundHints ?? "");
   const [referenceWorks, setReferenceWorks] = useState(boot?.referenceWorks ?? "");
-  const [note, setNote] = useState(boot?.note ?? "");
-  const [assets, setAssets] = useState<CapturedMedia[]>(boot?.assets ?? []);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [message, setMessage] = useState("");
   const [savePanelOpen, setSavePanelOpen] = useState(false);
@@ -74,32 +84,29 @@ export function InspirationRecordPage() {
   const [enrichError, setEnrichError] = useState("");
   const [enrichment, setEnrichment] = useState<Enrichment | null>(null);
 
-  const snapshot = useMemo<InspirationSnapshot | null>(() => {
-    const common = { primaryKind: kind, title, tags: moods } as const;
-    if (kind === "text") {
-      if (!text.trim()) return null;
-      return { ...common, primaryKind: "text", text: { inspirationType: textType, content: text, moods, speedFeel, soundHints, referenceWorks, advanced: {} } };
-    }
-    if (kind === "audio") {
-      if (!assets.length) return null;
-      return { ...common, primaryKind: "audio", audio: { note, items: assets.map((asset) => ({ assetId: asset.id, label: asset.label, note, role: "other" })) } };
-    }
-    if (!assets.length) return null;
-    return { ...common, primaryKind: "image", image: { note, assetIds: assets.map((asset) => asset.id), moods } };
-  }, [assets, kind, moods, note, referenceWorks, soundHints, speedFeel, text, textType, title]);
+  // 当前 tab 对应的 assets / note / recordId（派生值，避免每处都按 kind 三分支判断）。
+  const assets = kind === "image" ? imageAssets : audioAssets;
+  const note = kind === "image" ? imageNote : audioNote;
 
-  // 切换 Tab 代表切换草稿：重置本地编辑态，避免用文本覆盖已保存的音频记录。
-  // 用「渲染期间调整 state」替代 effect，避免级联渲染（react-hooks/set-state-in-effect）。
-  const [prevKind, setPrevKind] = useState<CaptureKind>(kind);
-  if (kind !== prevKind) {
-    setPrevKind(kind);
-    setRecordId(null);
-    setAssets([]);
-    setStatus("idle");
-    setMessage("");
-    setEnrichment(null);
-    setEnrichError("");
-  }
+  /**
+   * 一条灵感 = 一个记录，含 text/audio/image 三个可选槽位。snapshot 收集所有已录入槽位，
+   * primaryKind 取当前 tab（若当前 tab 有内容），否则取第一个有内容的槽位。任一槽位有内容即有效。
+   */
+  const snapshot = useMemo<InspirationSnapshot | null>(() => {
+    const slots: Partial<Pick<InspirationSnapshot, "text" | "audio" | "image">> = {};
+    if (text.trim()) slots.text = { inspirationType: textType, content: text, moods, speedFeel, soundHints, referenceWorks, advanced: {} };
+    if (audioAssets.length) slots.audio = { note: audioNote, items: audioAssets.map((asset) => ({ assetId: asset.id, label: asset.label, note: audioNote, role: "other" as const })) };
+    if (imageAssets.length) slots.image = { note: imageNote, assetIds: imageAssets.map((asset) => asset.id), moods };
+    const present: InspirationSnapshot["primaryKind"][] = [];
+    if (slots.text) present.push("text");
+    if (slots.audio) present.push("audio");
+    if (slots.image) present.push("image");
+    if (present.length === 0) return null;
+    const primaryKind = present.includes(kind) ? kind : present[0]!;
+    return { primaryKind, title, tags: moods, ...slots };
+  }, [audioAssets, audioNote, imageAssets, imageNote, kind, moods, referenceWorks, soundHints, speedFeel, text, textType, title]);
+
+  // 切换 tab 只改 kind，不清空任何已录入内容（三槽位同属一条记录）。
 
   /** 调用 AI 补全：把当前表单拼成 snapshot 发给后端，返回空缺字段的建议值。 */
   async function runEnrich() {
@@ -107,8 +114,8 @@ export function InspirationRecordPage() {
     const inputSnapshot: InspirationSnapshot = kind === "text"
       ? { primaryKind: "text", title, tags: moods, text: { inspirationType: textType, content: text, moods, speedFeel, soundHints, referenceWorks, advanced: {} } }
       : kind === "audio"
-        ? { primaryKind: "audio", title, tags: moods, audio: { note, items: assets.length ? assets.map((asset) => ({ assetId: asset.id, label: asset.label, note, role: "other" as const })) : [{ assetId: "00000000-0000-0000-0000-000000000000", label: note || "音频灵感", note, role: "other" as const }] } }
-        : { primaryKind: "image", title, tags: moods, image: { note, assetIds: assets.length ? assets.map((asset) => asset.id) : ["00000000-0000-0000-0000-000000000000"], moods } };
+        ? { primaryKind: "audio", title, tags: moods, audio: { note: audioNote, items: audioAssets.length ? audioAssets.map((asset) => ({ assetId: asset.id, label: asset.label, note: audioNote, role: "other" as const })) : [{ assetId: "00000000-0000-0000-0000-000000000000", label: audioNote || "音频灵感", note: audioNote, role: "other" as const }] } }
+        : { primaryKind: "image", title, tags: moods, image: { note: imageNote, assetIds: imageAssets.length ? imageAssets.map((asset) => asset.id) : ["00000000-0000-0000-0000-000000000000"], moods } };
     setEnriching(true);
     setEnrichError("");
     try {
@@ -150,6 +157,10 @@ export function InspirationRecordPage() {
     saveClientDraft(DRAFT_KEYS.inspiration, {
       kind,
       recordId,
+      audioAssets,
+      audioNote,
+      imageAssets,
+      imageNote,
       title,
       text,
       textType,
@@ -157,10 +168,8 @@ export function InspirationRecordPage() {
       speedFeel,
       soundHints,
       referenceWorks,
-      note,
-      assets,
     } satisfies InspirationSessionDraft);
-  }, [kind, recordId, title, text, textType, moods, speedFeel, soundHints, referenceWorks, note, assets]);
+  }, [kind, recordId, audioAssets, audioNote, imageAssets, imageNote, title, text, textType, moods, speedFeel, soundHints, referenceWorks]);
 
   useEffect(() => {
     if (!recordId || !snapshot) return;
@@ -223,21 +232,11 @@ export function InspirationRecordPage() {
   }
 
   async function handleMediaUploaded(asset: CapturedMedia) {
-    const nextAssets = [...assets, asset];
-    setAssets(nextAssets);
-    // State has not committed yet, so construct the next valid snapshot explicitly.
-    const nextSnapshot: InspirationSnapshot = kind === "audio"
-      ? { primaryKind: "audio", title, tags: moods, audio: { note, items: nextAssets.map((item) => ({ assetId: item.id, label: item.label, note, role: "other" })) } }
-      : { primaryKind: "image", title, tags: moods, image: { note, assetIds: nextAssets.map((item) => item.id), moods } };
+    // 追加到当前 kind 的素材；snapshot 随之变化，由上面的自动保存 effect 用最新 recordId 落库。
+    if (kind === "image") setImageAssets((prev) => [...prev, asset]);
+    else setAudioAssets((prev) => [...prev, asset]);
     setStatus("saving");
-    try {
-      await request(`/api/inspirations/${recordId}/autosave`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ snapshot: nextSnapshot, reason: "autosave" }) });
-      setStatus("saved");
-      setMessage("素材已保存");
-    } catch (error) {
-      setStatus("error");
-      setMessage(error instanceof Error ? error.message : "素材已上传，但记录保存失败");
-    }
+    setMessage("素材已上传，正在保存…");
   }
 
   async function openSavePanel() {
@@ -267,7 +266,6 @@ export function InspirationRecordPage() {
   }
 
   function selectKind(next: CaptureKind) { setKind(next); }
-  const mediaRecordId = kind === "text" ? null : recordId;
 
   return (
     <main className="min-h-screen bg-background px-4 py-5 sm:px-7 lg:px-10 lg:py-8">
@@ -287,8 +285,8 @@ export function InspirationRecordPage() {
             {kindTabs.map((tab) => {
               const Icon = tab.icon;
               const active = tab.id === kind;
-              // 已录入素材数作为选中指示点（文本=内容长度，音频/图片=素材条数）。
-              const count = tab.id === "text" ? (text.trim() ? 1 : 0) : assets.length;
+              // 已录入素材数作为选中指示点：文本=是否有内容，音频=音频素材数，图片=图片素材数。
+              const count = tab.id === "text" ? (text.trim() ? 1 : 0) : tab.id === "image" ? imageAssets.length : audioAssets.length;
               return <button key={tab.id} type="button" role="tab" aria-selected={active} onClick={() => selectKind(tab.id)} className={cn("flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-2 py-2.5 text-sm font-medium transition-colors", active ? "border-border bg-card text-foreground shadow-[0_1px_2px_rgba(16,24,40,0.04)]" : "border-transparent text-muted-foreground hover:bg-muted")}><Icon className="size-4" /><span className="hidden sm:inline">{tab.label}</span><span className="sm:hidden">{tab.id === "audio" ? "音频" : tab.id === "image" ? "图片" : "文本"}</span>{count > 0 && <span className="size-1.5 rounded-full bg-brand" aria-label={`已录入 ${count} 项`} />}</button>;
             })}
           </div>
@@ -301,7 +299,7 @@ export function InspirationRecordPage() {
             {enrichment && !enrichError && <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-brand/20 bg-brand-muted/40 px-3 py-2 text-xs text-foreground"><span>已补全空缺字段：</span>{enrichment.title && <span className="rounded bg-background/60 px-1.5 py-0.5">标题</span>}{enrichment.moods && <span className="rounded bg-background/60 px-1.5 py-0.5">情绪</span>}{enrichment.speedFeel && <span className="rounded bg-background/60 px-1.5 py-0.5">速度</span>}{enrichment.soundHints && <span className="rounded bg-background/60 px-1.5 py-0.5">音色</span>}{enrichment.referenceWorks && <span className="rounded bg-background/60 px-1.5 py-0.5">参考</span>}<span className="text-muted-foreground">可继续编辑或忽略</span></div>}
 
             {kind === "text" && <TextCapture text={text} setText={setText} textType={textType} setTextType={setTextType} moods={moods} setMoods={setMoods} speedFeel={speedFeel} setSpeedFeel={setSpeedFeel} soundHints={soundHints} setSoundHints={setSoundHints} referenceWorks={referenceWorks} setReferenceWorks={setReferenceWorks} />}
-            {kind !== "text" && <MediaCapture kind={kind} recordId={mediaRecordId} note={note} setNote={setNote} assets={assets} onPrepare={ensureMediaDraft} onUploaded={handleMediaUploaded} />}
+            {kind !== "text" && <MediaCapture kind={kind} note={note} setNote={kind === "image" ? setImageNote : setAudioNote} assets={assets} onPrepare={ensureMediaDraft} onUploaded={handleMediaUploaded} />}
           </div>
 
           <footer className="flex flex-col gap-3 border-t border-border bg-muted/20 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7"><p role="status" className={cn("text-sm", status === "error" ? "text-destructive" : "text-muted-foreground")}>{message || "灵感仅自己可见，保存到项目后才能进入制作台。"}</p><div className="flex gap-2"><button type="button" onClick={() => void persistCurrent()} disabled={!snapshot} title={!snapshot ? "请先填写有效内容" : undefined} className="min-h-10 rounded-lg border border-border bg-card px-3.5 text-sm font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40">保存记录</button><button type="button" disabled={!snapshot} onClick={() => void openSavePanel()} className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40"><Plus className="size-4" />保存到项目</button></div></footer>
@@ -312,16 +310,9 @@ export function InspirationRecordPage() {
   );
 }
 
-function MediaCapture({ kind, recordId, note, setNote, assets, onPrepare, onUploaded }: { kind: "audio" | "image"; recordId: string | null; note: string; setNote: (value: string) => void; assets: CapturedMedia[]; onPrepare: () => Promise<string>; onUploaded: (asset: CapturedMedia) => void }) {
-  const [preparedId, setPreparedId] = useState<string | null>(recordId);
-  // recordId 由父级异步创建后回传：在渲染期间同步本地 preparedId，避免 effect 级联渲染。
-  const [prevRecordId, setPrevRecordId] = useState<string | null>(recordId);
-  if (recordId !== prevRecordId) {
-    setPrevRecordId(recordId);
-    setPreparedId(recordId);
-  }
-  async function prepare() { setPreparedId(await onPrepare()); }
-  return <div className="space-y-4"><textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={1000} placeholder={kind === "audio" ? "这段旋律像什么？可以标注副歌、节奏或想保留的声音。" : "写下图片带来的画面、色彩或情绪。"} className="min-h-24 w-full resize-y rounded-lg border border-input bg-background p-3 text-sm outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring" />{preparedId ? <InspirationMediaCapture recordId={preparedId} kind={kind} onUploaded={onUploaded} /> : <button type="button" onClick={() => void prepare()} className="flex min-h-32 w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-muted/30 text-sm font-medium text-foreground hover:bg-muted"><Sparkles className="size-5 text-brand" />准备{kind === "audio" ? "录音 / 上传" : "图片上传"}</button>}{assets.length > 0 && <div className="grid gap-2 sm:grid-cols-2">{assets.map((asset) => <div key={asset.id} className="flex items-center gap-3 rounded-lg border border-border bg-card p-2.5">{kind === "image" ? <img src={asset.previewUrl} alt="已上传的图片灵感" className="size-12 rounded object-cover" /> : <AudioLines className="size-5 text-brand" />}<p className="min-w-0 truncate text-sm">{asset.label}</p><Check className="ml-auto size-4 text-success" /></div>)}</div>}</div>;
+function MediaCapture({ kind, note, setNote, assets, onPrepare, onUploaded }: { kind: "audio" | "image"; note: string; setNote: (value: string) => void; assets: CapturedMedia[]; onPrepare: () => Promise<string>; onUploaded: (asset: CapturedMedia) => void }) {
+  // 上传按钮始终可见：recordId 在上传瞬间由 InspirationMediaCapture 惰性获取（onPrepare→ensureMediaDraft）。
+  return <div className="space-y-4"><textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={1000} placeholder={kind === "audio" ? "这段旋律像什么？可以标注副歌、节奏或想保留的声音。" : "写下图片带来的画面、色彩或情绪。"} className="min-h-24 w-full resize-y rounded-lg border border-input bg-background p-3 text-sm outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring" /><InspirationMediaCapture kind={kind} prepareRecordId={onPrepare} onUploaded={onUploaded} />{assets.length > 0 && <div className="grid gap-2 sm:grid-cols-2">{assets.map((asset) => <div key={asset.id} className="flex items-center gap-3 rounded-lg border border-border bg-card p-2.5">{kind === "image" ? <>{asset.previewUrl ? <img src={asset.previewUrl} alt="已上传的图片灵感" onError={(event) => { const target = event.currentTarget; target.style.display = "none"; const fallback = target.nextElementSibling as HTMLElement | null; if (fallback) fallback.style.display = "inline-flex"; }} className="size-12 rounded object-cover" /> : null}<ImageIcon className="hidden size-12 rounded text-muted-foreground" aria-hidden /></> : <AudioLines className="size-5 text-brand" />}<p className="min-w-0 truncate text-sm">{asset.label}</p><Check className="ml-auto size-4 text-success" /></div>)}</div>}</div>;
 }
 
 function TextCapture(props: { text: string; setText: (value: string) => void; textType: "lyric" | "concept" | "story" | "melody_note" | "arrangement" | "other"; setTextType: (value: "lyric" | "concept" | "story" | "melody_note" | "arrangement" | "other") => void; moods: string[]; setMoods: (value: string[]) => void; speedFeel: "slow" | "medium" | "fast" | "unknown"; setSpeedFeel: (value: "slow" | "medium" | "fast" | "unknown") => void; soundHints: string; setSoundHints: (value: string) => void; referenceWorks: string; setReferenceWorks: (value: string) => void }) {

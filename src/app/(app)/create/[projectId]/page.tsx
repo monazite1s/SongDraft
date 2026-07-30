@@ -1,7 +1,6 @@
 /** 已有项目制作台：校验所有权后注入 initialProject。 */
 import { redirect } from "next/navigation";
 
-import { Sidebar } from "@/components/inspire/sidebar";
 import { SongDraftWorkspace } from "@/components/inspire/workspace";
 import { CreateEmptyState } from "@/components/inspire/create-empty-state";
 import { requireCurrentUser } from "@/modules/auth/queries";
@@ -11,13 +10,11 @@ export default async function WorkspacePage({ params }: { params: Promise<{ proj
   const user = await requireCurrentUser();
   const { projectId } = await params;
   // 「new」视为未选择项目：渲染空状态，避免空工作台与幽灵项目。
+  // 外壳（Sidebar + 内容 flex）由 (app)/layout.tsx 统一渲染。
   if (projectId === "new") {
     return (
-      <div className="flex h-screen overflow-hidden bg-background">
-        <Sidebar />
-        <div className="app-main-scroll flex min-w-0 flex-1 flex-col">
-          <CreateEmptyState />
-        </div>
+      <div className="app-main-scroll flex min-w-0 flex-1 flex-col">
+        <CreateEmptyState />
       </div>
     );
   }

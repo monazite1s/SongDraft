@@ -54,19 +54,21 @@ interface Props {
   /** 评论时间锚点（ms）；null = 未选择。提升到父组件，跨 Tab 切换存活。 */
   anchorMs: number | null
   onAnchorChange: (ms: number | null) => void
+  /** 发评论后乐观插入（不调 router.refresh，避免播放器重载进度归零）。 */
+  onCommentAdded?: (comment: OwnerCommentView) => void
 }
 
 type Tab = SongDetailTab
 
 export function SongDetailTabs(props: Props) {
-  const { projectId, versionId, versionNo, isMain, authorName, lyrics, comments, currentTime, hasAudio, onSeekAndPlay, anchorMs, onAnchorChange } = props
+  const { projectId, versionId, versionNo, isMain, authorName, lyrics, comments, currentTime, hasAudio, onSeekAndPlay, anchorMs, onAnchorChange, onCommentAdded } = props
   const [tab, setTab] = useState<Tab>('lyrics')
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {/* Tab 头 */}
-      <div className="shrink-0 border-b border-border bg-background px-6 sm:px-8">
-        <div className="mx-auto flex max-w-5xl gap-6">
+      <div className="shrink-0 bg-background px-6 pt-4 sm:px-8">
+        <div className="mx-auto flex max-w-5xl gap-1">
           <TabButton active={tab === 'lyrics'} onClick={() => setTab('lyrics')} testId="tab-lyrics">
             歌词
           </TabButton>
@@ -92,6 +94,7 @@ export function SongDetailTabs(props: Props) {
             onSeekAndPlay={onSeekAndPlay}
             anchorMs={anchorMs}
             onAnchorChange={onAnchorChange}
+            onCommentAdded={onCommentAdded}
           />
         )}
       </div>
@@ -106,8 +109,10 @@ function TabButton({ active, onClick, children, testId }: { active: boolean; onC
       data-testid={testId}
       onClick={onClick}
       className={cn(
-        'flex items-center gap-2 border-b-2 pb-3 pt-1 text-sm font-medium transition-colors',
-        active ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground',
+        'flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors',
+        active
+          ? 'border-border bg-card text-foreground shadow-[0_1px_2px_rgba(16,24,40,0.04)]'
+          : 'border-transparent text-muted-foreground hover:bg-muted',
       )}
     >
       {children}
@@ -253,9 +258,10 @@ interface CommentsPanelProps {
   onSeekAndPlay: (sec: number) => void
   anchorMs: number | null
   onAnchorChange: (ms: number | null) => void
+  onCommentAdded?: (comment: OwnerCommentView) => void
 }
 
-function CommentsPanel({ projectId, versionId, authorName, comments, currentTime, hasAudio, onSeekAndPlay, anchorMs, onAnchorChange }: CommentsPanelProps) {
+function CommentsPanel({ projectId, versionId, authorName, comments, currentTime, hasAudio, onSeekAndPlay, anchorMs, onAnchorChange, onCommentAdded }: CommentsPanelProps) {
   const router = useRouter()
 
   const [text, setText] = useState('')
@@ -318,11 +324,12 @@ function CommentsPanel({ projectId, versionId, authorName, comments, currentTime
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ versionId, content, atMs: anchorMs }),
       })
-      const json = (await res.json()) as { ok?: boolean; error?: { message?: string } }
+      const json = (await res.json()) as { ok?: boolean; data?: OwnerCommentView; error?: { message?: string } }
       if (!res.ok || !json.ok) throw new Error(json.error?.message || '发送评论失败')
+      // 乐观插入：用返回的评论对象 append 到列表，不调 router.refresh（避免播放器重载、进度归零）。
+      if (json.data) onCommentAdded?.(json.data)
       // 发送完成后清空文字，但保留评论时间，方便在同一位置继续补充（规范 §7）。
       setText('')
-      router.refresh()
     } catch (err) {
       setSendError(err instanceof Error ? err.message : '发送评论失败')
     } finally {

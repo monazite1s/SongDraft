@@ -40,7 +40,9 @@ export const createUploadIntentSchema = z.union([
   .superRefine((value, context) => {
     const rule = rules[value.kind];
     const extension = value.filename.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
-    if (!(rule.mimeTypes as readonly string[]).includes(value.mimeType)) {
+    // 容忍 codecs 参数（如 `audio/webm;codecs=opus`）：比较前剥离 `;` 之后的参数段。
+    const base = value.mimeType.split(";")[0];
+    if (!(rule.mimeTypes as readonly string[]).includes(base)) {
       context.addIssue({ code: z.ZodIssueCode.custom, path: ["mimeType"], message: "文件类型不受支持" });
     }
     if (!extension || !(rule.extensions as readonly string[]).includes(extension)) {

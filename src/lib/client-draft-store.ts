@@ -45,6 +45,34 @@ export function saveLastProject(id: string, title: string): void {
   }
 }
 
+/**
+ * 「默认生成数量」持久化（设置页 → 制作台）。
+ * 用户在设置页选择 1/3/5/10，下次进入制作台时作为 quantity 默认值。
+ * 用 localStorage（非 sessionStorage），需跨 tab/长期保留。
+ */
+const DEFAULT_QUANTITY_KEY = "songdraft:default-quantity";
+
+export function loadDefaultQuantity(): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(DEFAULT_QUANTITY_KEY);
+    if (!raw) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveDefaultQuantity(q: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(DEFAULT_QUANTITY_KEY, String(q));
+  } catch {
+    /* quota / private mode：忽略即可 */
+  }
+}
+
 /** 清除失效的「上次活跃项目」（项目已删除 / mock 重启丢失后避免反复跳进 404）。 */
 export function clearLastProject(): void {
   if (typeof window === "undefined") return;
@@ -96,6 +124,7 @@ export function resetClientDraftStore(): void {
   try {
     window.sessionStorage.clear();
     window.localStorage.removeItem(LAST_PROJECT_KEY);
+    window.localStorage.removeItem(DEFAULT_QUANTITY_KEY);
   } catch {
     /* ignore */
   }

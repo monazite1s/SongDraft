@@ -45,17 +45,23 @@ export function ShareModal({
   open,
   onClose,
   projectId: projectIdOverride,
+  versionId: versionIdOverride,
 }: {
   open: boolean
   onClose: () => void
   /** 显式传入 projectId，覆盖从路径推导（供非制作台页面复用，如歌曲详情页）。 */
   projectId?: string
+  /** 显式传入要分享的版本（歌曲详情页传入当前 Demo）；未传则打开时拉取项目版本列表。 */
+  versionId?: string
 }) {
   const pathname = usePathname()
   const projectId = projectIdOverride ?? deriveProjectId(pathname)
 
   const [activeShare, setActiveShare] = useState<ShareView | null>(null)
   const [loadingShare, setLoadingShare] = useState(false)
+  /** 可分享的版本 id：优先用 props，否则从 /versions 取主版本/最新版。 */
+  const [shareVersionId, setShareVersionId] = useState<string | null>(versionIdOverride ?? null)
+  const [loadingVersion, setLoadingVersion] = useState(false)
   const [createdToken, setCreatedToken] = useState<string | null>(null)
   const [qr, setQr] = useState<string>('')
   const [copied, setCopied] = useState(false)
@@ -91,6 +97,36 @@ export function ShareModal({
     }
   }, [projectId])
 
+  /**
+   * 解析可分享 versionId。
+   * 根因修复：旧逻辑误用「已有分享」的 versionId，首次分享永远没有 activeShare → 误报无 Demo。
+   * 正确来源：props.versionId（详情页）或 GET /versions（主版本优先，否则最新）。
+   */
+  const resolveVersion = useCallback(async () => {
+    if (versionIdOverride) {
+      setShareVersionId(versionIdOverride)
+      return
+    }
+    if (!projectId) {
+      setShareVersionId(null)
+      return
+    }
+    setLoadingVersion(true)
+    try {
+      const res = await fetch(`/api/projects/${projectId}/versions`)
+      const body = await res.json() as ApiEnvelope<{ id: string; isMain: boolean; versionNo: number }[]>
+      if (!res.ok || !body.data) throw new Error(body.error?.message || '加载版本失败')
+      const main = body.data.find((v) => v.isMain)
+      const latest = [...body.data].sort((a, b) => b.versionNo - a.versionNo)[0]
+      setShareVersionId(main?.id ?? latest?.id ?? null)
+    } catch (e) {
+      setShareError(e instanceof Error ? e.message : '加载版本失败')
+      setShareVersionId(null)
+    } finally {
+      setLoadingVersion(false)
+    }
+  }, [projectId, versionIdOverride])
+
   /** 加载某分享的访问者授权列表（含已撤销，便于审计）。 */
   const loadGrants = useCallback(async (shareId: string) => {
     if (!projectId) return
@@ -118,15 +154,18 @@ export function ShareModal({
       setCreatedToken(null)
       setCopied(false)
       setQr('')
+      setShareError('')
+      if (versionIdOverride) setShareVersionId(versionIdOverride)
     }
   }
 
-  // 打开时加载已有分享；effect 只触发异步 fetch，setState 在 async 回调内（合规）。
+  // 打开时加载已有分享 + 解析可分享版本；effect 只触发异步 fetch，setState 在 async 回调内（合规）。
   useEffect(() => {
     if (!open) return
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadShare()
-  }, [open, loadShare])
+    void resolveVersion()
+  }, [open, loadShare, resolveVersion])
 
   // 切换分享后清空访问者（渲染期间调整 state，非 effect 内 setState）。
   const [prevShareId, setPrevShareId] = useState<string | null>(activeShare?.id ?? null)
@@ -161,8 +200,7 @@ export function ShareModal({
     setCreating(true)
     setShareError('')
     try {
-      // 需要一个 versionId：复用当前活动分享的 versionId，没有则提示先保存版本。
-      const versionId = activeShare?.versionId
+      const versionId = shareVersionId
       if (!versionId) throw new Error('请先生成并保存至少一个 Demo 版本再分享')
       const allowComments = permission === 'comment'
       const expiresAt = expiryDays > 0
@@ -212,7 +250,7 @@ export function ShareModal({
 
   // displayToken 非空表示有「本次会话生成」的可展示链接；已存在的链接不展示原始 token（仅创建时返回）。
   const displayToken = createdToken
-  const canCreate = Boolean(projectId) && Boolean(activeShare?.versionId)
+  const canCreate = Boolean(projectId) && Boolean(shareVersionId) && !loadingVersion
 
   return (
     <Modal
@@ -335,10 +373,10 @@ export function ShareModal({
         </div>
 
         {shareError ? <p role="alert" className="text-sm text-destructive">{shareError}</p> : null}
-        {loadingShare && !activeShare ? (
-          <p className="text-xs text-muted-foreground">正在加载现有分享…</p>
+        {(loadingShare || loadingVersion) && !shareVersionId ? (
+          <p className="text-xs text-muted-foreground">正在加载可分享版本…</p>
         ) : null}
-        {!activeShare && !loadingShare && projectId ? (
+        {!loadingVersion && !shareVersionId && projectId ? (
           <p className="text-[11px] text-muted-foreground">当前项目尚无可分享的版本，请先生成并保存 Demo。</p>
         ) : null}
         {!projectId ? (

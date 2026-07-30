@@ -4,12 +4,10 @@ import { useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   Check,
-  ChevronDown,
   Cloud,
   GitBranch,
   MoreHorizontal,
   Share2,
-  TriangleAlert,
   Copy,
   Trash2,
   History,
@@ -19,11 +17,8 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
-  PROVIDERS,
   type InputKind,
-  type Provider,
 } from '@/lib/inspire-data'
-import { StatusDot } from './ui'
 
 const INPUT_LABELS: Record<InputKind, string> = {
   text: '歌词/文本',
@@ -63,8 +58,6 @@ function Popover({
 }
 
 export function TopToolbar({
-  provider,
-  onProviderChange,
   selectedInputs,
   projectTitle,
   saveState,
@@ -72,11 +65,8 @@ export function TopToolbar({
   currentVersion,
   onOpenVersions,
   onOpenShare,
-  onManageProviders,
   onOpenProjectSelect,
 }: {
-  provider: Provider
-  onProviderChange: (p: Provider) => void
   selectedInputs: InputKind[]
   projectTitle: string
   saveState: 'dirty' | 'saving' | 'saved' | 'error'
@@ -84,11 +74,9 @@ export function TopToolbar({
   currentVersion: string
   onOpenVersions: () => void
   onOpenShare: () => void
-  onManageProviders: () => void
   /** 任务6：点击项目标题切换/新建项目，弹出 ProjectSelectDialog。 */
   onOpenProjectSelect: () => void
 }) {
-  const [providerOpen, setProviderOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
 
   // 复制为新项目 / 删除项目：自包含，不向 workspace 加 prop。
@@ -160,8 +148,6 @@ export function TopToolbar({
     setMenuError('')
   }
 
-  const unsupported = selectedInputs.filter((i) => !provider.supports.includes(i))
-
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-4">
       <div className="flex min-w-0 items-center gap-2.5">
@@ -195,78 +181,6 @@ export function TopToolbar({
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        {/* provider selector */}
-        <div className="relative hidden sm:block">
-          <button
-            onClick={() => setProviderOpen((v) => !v)}
-            aria-expanded={providerOpen}
-            className="flex h-8 items-center gap-2 rounded-lg border border-border bg-background px-2.5 text-sm text-foreground transition-colors hover:bg-muted"
-          >
-            <StatusDot status={provider.status} />
-            <span className="max-w-32 truncate">{provider.name}</span>
-            {unsupported.length > 0 && (
-              <TriangleAlert className="size-3.5 text-warning" />
-            )}
-            <ChevronDown className="size-3.5 text-muted-foreground" />
-          </button>
-          <Popover
-            open={providerOpen}
-            onClose={() => setProviderOpen(false)}
-            className="w-80"
-          >
-            <p className="px-2 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              生成供应商
-            </p>
-            {PROVIDERS.map((p) => {
-              const miss = selectedInputs.filter((i) => !p.supports.includes(i))
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => {
-                    onProviderChange(p)
-                    setProviderOpen(false)
-                  }}
-                  className="flex w-full items-start gap-2.5 rounded-lg p-2 text-left transition-colors hover:bg-muted"
-                >
-                  <span className="mt-0.5">
-                    <StatusDot status={p.status} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-foreground">
-                        {p.name}
-                      </span>
-                      {p.id === provider.id && (
-                        <Check className="ml-auto size-4 text-brand" />
-                      )}
-                    </span>
-                    <span className="mt-0.5 block text-xs text-muted-foreground">
-                      {p.note}
-                    </span>
-                    {miss.length > 0 && (
-                      <span className="mt-1 flex items-center gap-1 text-[11px] text-warning-foreground">
-                        <TriangleAlert className="size-3" />
-                        不支持：{miss.map((m) => INPUT_LABELS[m]).join('、')}
-                      </span>
-                    )}
-                  </span>
-                </button>
-              )
-            })}
-            <div className="mt-1 border-t border-border pt-1">
-              <button
-                onClick={() => {
-                  setProviderOpen(false)
-                  onManageProviders()
-                }}
-                className="w-full rounded-lg px-2 py-1.5 text-left text-xs text-brand hover:bg-muted"
-              >
-                管理供应商与能力…
-              </button>
-            </div>
-          </Popover>
-        </div>
-
         {/* version indicator */}
         <button
           onClick={onOpenVersions}

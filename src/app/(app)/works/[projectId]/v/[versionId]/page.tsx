@@ -3,10 +3,10 @@
  * 层级：项目下某一版本（Demo）的播放 + 歌词 + 评论（全屏独立路由，不居中弹窗）。
  * Server Component 聚合 ProjectService + GenerationService + ShareService；
  * 顶部栏 / 信息区 / 播放器 / Tab 全部下沉到 SongDetailClient，播放器状态在 client 内提升。
+ * 外壳（Sidebar + 内容 flex）由 (app)/layout.tsx 统一渲染，本页只返回内容客户端。
  */
 import { notFound } from "next/navigation";
 
-import { Sidebar } from "@/components/inspire/sidebar";
 import { SongDetailClient } from "@/components/works/song-detail-client";
 import { requireCurrentUser } from "@/modules/auth/queries";
 import { GenerationService } from "@/modules/generation/generation-service";
@@ -45,22 +45,19 @@ export default async function SongDetailPage({
   const authorInitial = (user.displayName || "U").trim().charAt(0).toUpperCase();
 
   return (
-    <div className="flex h-screen bg-background">
-      <Sidebar />
-      <SongDetailClient
-        projectId={projectId}
-        projectTitle={project.title}
-        description={project.description}
-        lyrics={project.lyrics ?? ""}
-        authorName={user.displayName}
-        authorInitial={authorInitial}
-        createdAt={project.createdAt}
-        updatedAt={project.updatedAt}
-        status={project.status}
-        versions={versions}
-        version={version}
-        comments={comments}
-      />
-    </div>
+    <SongDetailClient
+      projectId={projectId}
+      projectTitle={project.title}
+      description={project.description}
+      lyrics={project.lyrics ?? ""}
+      authorName={user.displayName}
+      authorInitial={authorInitial}
+      createdAt={project.createdAt}
+      updatedAt={project.updatedAt}
+      status={project.status}
+      versions={versions}
+      version={version}
+      comments={comments}
+    />
   );
 }

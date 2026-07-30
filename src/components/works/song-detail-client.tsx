@@ -10,7 +10,8 @@
  *     紧贴信息区右上角）+ 全页唯一播放器。
  *   ③ Tab 区（flex-1 min-h-0 overflow-hidden）：歌词/评论，内部 overflow-y-auto，
  *     主页面不滚动，Tab 内容在 Tab 区内滚动。
- * - 主内容容器 mx-auto max-w-5xl 两侧对称 padding，视觉居中。
+ * - 主内容容器 mx-auto max-w-5xl 两侧对称 padding，视觉居中；Tab 区内容（歌词/评论）
+ *   同样以 mx-auto max-w-5xl 居中，与信息区左右对齐。
  * - 播放器状态（currentTime/isPlaying/duration + seek 句柄）提升到此，Tab 共享；
  *   切 Tab 时播放器不卸载、不刷新、不停止。
  */
@@ -59,6 +60,22 @@ export function SongDetailClient(props: Props) {
   const [shareOpen, setShareOpen] = useState(false)
   const [descExpanded, setDescExpanded] = useState(false)
 
+  /**
+   * 评论本地 state：避免发评论后 router.refresh() 触发服务端重渲染（会重新签名
+   * COS audioUrl → <audio> 重载 → 进度归零/播放中断，Bug #10/#11）。
+   * 用渲染期 prev 模式同步外部 prop（不在 effect 里 setState，避免 set-state-in-effect）：
+   * 当 props.comments 引用变化（版本切换等）时，下一次渲染用新值替换本地 state。
+   */
+  const [commentList, setCommentList] = useState(comments)
+  if (comments !== commentList) {
+    setCommentList(comments)
+  }
+
+  /** 新增评论乐观插入：POST 成功后由 CommentsPanel 回调，避免 router.refresh。 */
+  const handleCommentAdded = useCallback((comment: OwnerCommentView) => {
+    setCommentList((prev) => [...prev, comment])
+  }, [])
+
   // 播放器状态（全页唯一，提升到此）。
   const [currentTime, setCurrentTime] = useState(0)
   const [, setIsPlaying] = useState(false)
@@ -86,7 +103,7 @@ export function SongDetailClient(props: Props) {
   const hasAudio = version.hasAudio && Boolean(version.audioUrl)
 
   return (
-    <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden bg-background">
+    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-background">
       {/* 顶部操作栏：仅 返回 + 歌曲路径（操作按钮移到信息区右上角） */}
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-6">
         <Link href={`/works/${projectId}`}>
@@ -140,12 +157,7 @@ export function SongDetailClient(props: Props) {
                         历史版本
                       </Button>
                     </VersionSwitcher>
-                  ) : (
-                    <Button variant="outline" size="sm" className="gap-1.5 opacity-50" disabled title="仅一个版本，无可切换的历史">
-                      <History className="size-3.5" />
-                      历史版本
-                    </Button>
-                  )}
+                  ) : null}
                   <MoreMenu
                     hasAudio={hasAudio}
                     audioUrl={version.audioUrl ?? null}
@@ -225,16 +237,17 @@ export function SongDetailClient(props: Props) {
           isMain={version.isMain}
           authorName={authorName}
           lyrics={lyrics}
-          comments={comments}
+          comments={commentList}
           currentTime={currentTime}
           hasAudio={hasAudio}
           onSeekAndPlay={seekAndPlay}
           anchorMs={commentAnchorMs}
           onAnchorChange={setCommentAnchorMs}
+          onCommentAdded={handleCommentAdded}
         />
       </div>
 
-      <ShareModal open={shareOpen} onClose={() => setShareOpen(false)} projectId={projectId} />
+      <ShareModal open={shareOpen} onClose={() => setShareOpen(false)} projectId={projectId} versionId={version.id} />
     </div>
   )
 }

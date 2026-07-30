@@ -75,19 +75,25 @@ export class ShareService {
       if (!share) throw new DomainError("NOT_FOUND", 404, "分享链接不存在");
       assertActive(share);
       await this.authorizeMockAccess(share, user);
-      return { ...share.public, comments: share.public.comments.filter((comment) => !mockDeletedComments.has(comment.id)) };
+      // 评论归属于版本：owner 在详情页的评论（挂在占位 share 上）与各分享链接下的评论
+      // 同属一个 versionId，互相可见（避免按 shareId 切割导致看不到对方的评论）。
+      const versionComments = [...mockShares.values()]
+        .filter((s) => s.versionId === share.versionId)
+        .flatMap((s) => s.public.comments)
+        .filter((comment) => !mockDeletedComments.has(comment.id));
+      return { ...share.public, comments: versionComments };
     }
     const db = getDatabase();
     const [share] = await db.select({ id: shareLinks.id, projectId: shareLinks.projectId, ownerId: projects.ownerId, versionId: shareLinks.versionId, allowComments: shareLinks.allowComments, expiresAt: shareLinks.expiresAt, revokedAt: shareLinks.revokedAt, title: projects.title, description: projects.description, lyrics: projects.currentLyrics, artist: projects.artistSnapshot, versionNo: demoVersions.versionNo }).from(shareLinks).innerJoin(projects, eq(projects.id, shareLinks.projectId)).innerJoin(demoVersions, eq(demoVersions.id, shareLinks.versionId)).where(eq(shareLinks.tokenHash, tokenHash(token))).limit(1);
     if (!share) throw new DomainError("NOT_FOUND", 404, "分享链接不存在"); assertActive({ expiresAt: share.expiresAt?.toISOString() ?? null, revokedAt: share.revokedAt?.toISOString() ?? null });
     await this.ensureDbGrant(share.id, share.projectId, share.ownerId, user);
     const [asset] = await db.select({ metadata: demoAssets.metadata, objectKey: demoAssets.objectKey, executionKind: demoAssets.executionKind }).from(demoAssets).where(eq(demoAssets.versionId, share.versionId)).limit(1);
-    const rows = await db.select({ id: comments.id, guestName: comments.guestName, content: comments.content, atMs: comments.atMs, createdAt: comments.createdAt }).from(comments).where(and(eq(comments.shareId, share.id), isNull(comments.deletedAt)));
+    const rows = await db.select({ id: comments.id, authorDisplayName: profiles.displayName, guestName: comments.guestName, content: comments.content, atMs: comments.atMs, createdAt: comments.createdAt }).from(comments).leftJoin(profiles, eq(profiles.id, comments.authorUserId)).where(and(eq(comments.versionId, share.versionId), isNull(comments.deletedAt)));
     // 解析签名播放 URL：有 COS objectKey/cosObjectKey → 短时签名；否则回退 asset 的 audioUrl。
     const shareCosKey = typeof asset?.metadata.cosObjectKey === "string" ? asset.metadata.cosObjectKey : asset?.objectKey;
     const shareFallback = typeof asset?.metadata.audioUrl === "string" ? asset.metadata.audioUrl : null;
     const resolvedAudioUrl = await resolveAudioUrl(shareCosKey, shareFallback);
-    return { title: share.title, description: share.description, lyrics: share.lyrics, artist: share.artist as unknown as ArtistProfile | null, author: "SongDraft 创作者", versionId: share.versionId, versionNo: share.versionNo, demoTitle: String(asset?.metadata.title || `${share.title} Demo`), hasAudio: Boolean(asset?.metadata.hasAudio), audioUrl: resolvedAudioUrl, executionKind: asset?.executionKind || "simulated", allowComments: share.allowComments, comments: rows.map((row) => ({ id: row.id, author: row.guestName || "SongDraft 用户", content: row.content, atMs: row.atMs, createdAt: row.createdAt.toISOString() })) };
+    return { title: share.title, description: share.description, lyrics: share.lyrics, artist: share.artist as unknown as ArtistProfile | null, author: "SongDraft 创作者", versionId: share.versionId, versionNo: share.versionNo, demoTitle: String(asset?.metadata.title || `${share.title} Demo`), hasAudio: Boolean(asset?.metadata.hasAudio), audioUrl: resolvedAudioUrl, executionKind: asset?.executionKind || "simulated", allowComments: share.allowComments, comments: rows.map((row) => ({ id: row.id, author: row.authorDisplayName ?? row.guestName ?? "SongDraft 用户", content: row.content, atMs: row.atMs, createdAt: row.createdAt.toISOString() })) };
   }
 
   /**
@@ -153,8 +159,8 @@ export class ShareService {
   async listComments(owner: AuthUser, projectId: string): Promise<OwnerCommentView[]> {
     if (!process.env.DATABASE_URL) return [...mockShares.values()].filter((share) => share.ownerId === owner.id && share.projectId === projectId).flatMap((share) => share.public.comments.filter((comment) => !mockDeletedComments.has(comment.id)).map((comment) => ({ ...comment, versionId: share.versionId, shareId: share.id, read: mockReadComments.has(comment.id) }))).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const db = getDatabase();
-    const rows = await db.select({ id: comments.id, versionId: comments.versionId, shareId: comments.shareId, guestName: comments.guestName, content: comments.content, atMs: comments.atMs, createdAt: comments.createdAt, readAt: comments.readAt }).from(comments).innerJoin(projects, eq(projects.id, comments.projectId)).where(and(eq(comments.projectId, projectId), eq(projects.ownerId, owner.id), isNull(comments.deletedAt)));
-    return rows.map((row) => ({ id: row.id, versionId: row.versionId, shareId: row.shareId, author: row.guestName || "SongDraft 用户", content: row.content, atMs: row.atMs, createdAt: row.createdAt.toISOString(), read: Boolean(row.readAt) })).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const rows = await db.select({ id: comments.id, versionId: comments.versionId, shareId: comments.shareId, authorDisplayName: profiles.displayName, guestName: comments.guestName, content: comments.content, atMs: comments.atMs, createdAt: comments.createdAt, readAt: comments.readAt }).from(comments).innerJoin(projects, eq(projects.id, comments.projectId)).leftJoin(profiles, eq(profiles.id, comments.authorUserId)).where(and(eq(comments.projectId, projectId), eq(projects.ownerId, owner.id), isNull(comments.deletedAt)));
+    return rows.map((row) => ({ id: row.id, versionId: row.versionId, shareId: row.shareId, author: row.authorDisplayName ?? row.guestName ?? "SongDraft 用户", content: row.content, atMs: row.atMs, createdAt: row.createdAt.toISOString(), read: Boolean(row.readAt) })).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   async markCommentRead(owner: AuthUser, commentId: string) {

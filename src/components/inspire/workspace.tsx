@@ -17,25 +17,21 @@ import { cn } from '@/lib/utils'
 import type { ProjectDetail } from '@/modules/projects/project-types'
 import type { CreativeStreamEvent } from '@/modules/ai/lyric-assistant'
 import type { GenerationResult } from '@/modules/generation/generation-types'
-import { DRAFT_KEYS, loadClientDraft, saveClientDraft, clearClientDraft, loadLastProject, saveLastProject, clearLastProject } from '@/lib/client-draft-store'
-import { Sidebar } from './sidebar'
+import { DRAFT_KEYS, loadClientDraft, saveClientDraft, clearClientDraft, loadLastProject, saveLastProject, clearLastProject, loadDefaultQuantity } from '@/lib/client-draft-store'
 import { TopToolbar } from './top-toolbar'
-import { MaterialPanel, type MaterialDraft } from './material-panel'
+import { MaterialPanel, type MaterialDraft, type MaterialAsset } from './material-panel'
 import { WorkspacePrimaryAction, type Busy, type Phase } from './action-column'
 import { BriefPanel } from './brief-panel'
 import { VersionModal } from './version-modal'
-import { ProviderModal } from './provider-modal'
 import { ShareModal } from './share-modal'
 import { ProjectSelectDialog } from './project-select-dialog'
 import { SongDetailSheet, type SongDetailSheetCandidate } from './song-detail-sheet'
 import {
   DEFAULT_BRIEF,
   DEMO_CANDIDATES,
-  PROVIDERS,
   type CreativeBrief,
   type InputKind,
   type OutputType,
-  type Provider,
 } from '@/lib/inspire-data'
 
 type SaveState = 'dirty' | 'saving' | 'saved' | 'error'
@@ -56,12 +52,21 @@ type WorkspaceSessionDraft = {
   brief: CreativeBrief
   briefId: string | null
   projectTitle: string
+  generatedCandidates: typeof DEMO_CANDIDATES
+  savedCandidateIds: string[]
+  savedVersionIdMap: Record<string, string>
+  versionNo: number
+  mainId: string
+  selectedCandidateIds: string[]
+  /** 哼唱录音（COS 持久化，切路由/刷新不丢）。 */
+  hummingAsset: MaterialAsset | null
+  /** 参考图像（COS 持久化，切路由/刷新不丢）。 */
+  referenceImage: MaterialAsset | null
 }
 
 function bootWorkspace(projectId: string, initialProject?: ProjectDetail): WorkspaceSessionDraft {
   const cached = loadClientDraft<WorkspaceSessionDraft>(DRAFT_KEYS.workspace(projectId))
-  if (cached?.draft) return cached
-  return {
+  const defaults: WorkspaceSessionDraft = {
     draft: {
       creativePrompt: initialProject?.description ?? '',
       lyrics: initialProject?.lyrics ?? '',
@@ -71,14 +76,29 @@ function bootWorkspace(projectId: string, initialProject?: ProjectDetail): Works
     refinedLyrics: null,
     selectedInputs: ['text', 'audio', 'image'],
     coverSet: false,
-    quantity: 3,
+    quantity: loadDefaultQuantity() ?? 3,
     extraPrompt: '',
     outputType: 'song',
     phase: 'idle',
     brief: DEFAULT_BRIEF,
     briefId: null,
     projectTitle: initialProject?.title ?? '未命名项目',
+    generatedCandidates: [],
+    savedCandidateIds: [],
+    savedVersionIdMap: {},
+    versionNo: initialProject ? 1 : 0,
+    mainId: 'c1',
+    selectedCandidateIds: [],
+    hummingAsset: null,
+    referenceImage: null,
   }
+  // 合并默认值与旧缓存：旧缓存可能缺新增字段（generatedCandidates 等），用 defaults 补全。
+  let merged = cached?.draft ? { ...defaults, ...cached } : defaults
+  // 有未展示完的生成结果时，强制回到 results，避免 phase 卡在 brief/idle 导致结果区不渲染。
+  if (merged.generatedCandidates.length > 0 && merged.phase !== 'results') {
+    merged = { ...merged, phase: 'results' }
+  }
+  return merged
 }
 
 export function SongDraftWorkspace({ initialProject }: { initialProject?: ProjectDetail }) {
@@ -93,8 +113,7 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
   const [isRefining, setIsRefining] = useState(false)
   const [refinementMessage, setRefinementMessage] = useState('')
   const [refinementError, setRefinementError] = useState('')
-  const [generatedCandidates, setGeneratedCandidates] = useState<typeof DEMO_CANDIDATES>([])
-  const [provider, setProvider] = useState<Provider>(PROVIDERS[0])
+  const [generatedCandidates, setGeneratedCandidates] = useState<typeof DEMO_CANDIDATES>(boot.generatedCandidates)
   const [outputType, setOutputType] = useState<OutputType>(boot.outputType)
   const [selectedInputs, setSelectedInputs] = useState<InputKind[]>(boot.selectedInputs)
   const [coverSet, setCoverSet] = useState(boot.coverSet)
@@ -105,16 +124,15 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
   const [briefId, setBriefId] = useState<string | null>(boot.briefId)
   const [phase, setPhase] = useState<Phase>(boot.phase)
   const [busy, setBusy] = useState<Busy>(false)
-  const [mainId, setMainId] = useState('c1')
+  const [mainId, setMainId] = useState(boot.mainId)
   /** 已保存为正式版本的候选 ID（候选/版本拆分：未保存候选不会进入版本历史）。 */
-  const [savedCandidateIds, setSavedCandidateIds] = useState<string[]>([])
+  const [savedCandidateIds, setSavedCandidateIds] = useState<string[]>(boot.savedCandidateIds)
   /** 已保存候选 → 正式版本 UUID 的映射（用于详情栏「进入全屏详情」链接）。 */
-  const [savedVersionIdMap, setSavedVersionIdMap] = useState<Record<string, string>>({})
+  const [savedVersionIdMap, setSavedVersionIdMap] = useState<Record<string, string>>(boot.savedVersionIdMap)
   const [saveState, setSaveState] = useState<SaveState>(initialProject ? 'saved' : 'dirty')
   const [saveError, setSaveError] = useState('')
-  const [versionNo, setVersionNo] = useState(initialProject ? 1 : 0)
+  const [versionNo, setVersionNo] = useState(boot.versionNo)
   const [versionsOpen, setVersionsOpen] = useState(false)
-  const [providersOpen, setProvidersOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   /** 任务6：项目切换弹窗（点击标题触发）。 */
   const [projectSelectOpen, setProjectSelectOpen] = useState(false)
@@ -123,7 +141,11 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
   /** 歌曲详情栏：选中的候选 id（SPEC §三.3，点击结果 Item 打开最右侧详情栏）。 */
   const [detailId, setDetailId] = useState<string | null>(null)
   /** 任务3：批量保存版本时勾选的候选 id（提升到 workspace，切换 tab/折叠不丢失）。 */
-  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([])
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>(boot.selectedCandidateIds)
+  /** 哼唱录音资产（COS URL，持久化到 sessionStorage；切路由/刷新后由 boot 回填）。 */
+  const [hummingAsset, setHummingAsset] = useState<MaterialAsset | null>(boot.hummingAsset)
+  /** 参考图像资产（COS URL，持久化到 sessionStorage；切路由/刷新后由 boot 回填）。 */
+  const [referenceImage, setReferenceImage] = useState<MaterialAsset | null>(boot.referenceImage)
   const savingRef = useRef(false)
 
   /** 有效歌词：有精修结果时优先用于生成 / 落库，原始输入框仍保留 draft.lyrics。 */
@@ -167,8 +189,16 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
       brief,
       briefId,
       projectTitle,
+      generatedCandidates,
+      savedCandidateIds,
+      savedVersionIdMap,
+      versionNo,
+      mainId,
+      selectedCandidateIds,
+      hummingAsset,
+      referenceImage,
     } satisfies WorkspaceSessionDraft)
-  }, [projectId, draft, originalLyrics, refinedLyrics, selectedInputs, coverSet, quantity, extraPrompt, outputType, phase, brief, briefId, projectTitle])
+  }, [projectId, draft, originalLyrics, refinedLyrics, selectedInputs, coverSet, quantity, extraPrompt, outputType, phase, brief, briefId, projectTitle, generatedCandidates, savedCandidateIds, savedVersionIdMap, versionNo, mainId, selectedCandidateIds, hummingAsset, referenceImage])
 
   /**
    * 任务6：持久化「上次活跃项目」（lastProjectId），与草稿正交。
@@ -320,6 +350,14 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
       brief,
       briefId,
       projectTitle,
+      generatedCandidates,
+      savedCandidateIds,
+      savedVersionIdMap,
+      versionNo,
+      mainId,
+      selectedCandidateIds,
+      hummingAsset,
+      referenceImage,
     } satisfies WorkspaceSessionDraft)
     clearClientDraft(DRAFT_KEYS.workspace(''))
     setProjectId(createdId)
@@ -337,6 +375,10 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
         projectId: id,
         briefId,
         lyrics: effectiveLyrics,
+        // 音频素材被纳入本次生成时，带上参考音频 COS key → 服务端签发预签名 URL，走 music-cover 双通道。
+        hummingObjectKey: selectedInputs.includes('audio') ? (hummingAsset?.objectKey ?? null) : null,
+        // 图像素材被纳入本次生成时，带上参考图 COS key → 服务端走 GLM-4V 图生文，注入音乐 prompt 视觉意象。
+        imageObjectKey: selectedInputs.includes('image') ? (referenceImage?.objectKey ?? null) : null,
         idempotencyKey: crypto.randomUUID(),
       }),
     })
@@ -361,8 +403,33 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
     })
     setGeneratedCandidates(mapped)
     setMainId(mapped[0]?.id ?? mainId)
+    // 生成结果默认全选（用户要求：checkbox 默认勾选，便于直接保存为版本）。
+    setSelectedCandidateIds(mapped.map((c) => c.id))
     setVersionNo((current) => current + Math.max(mapped.length, 1))
     setPhase('results')
+    // 立即写入会话草稿，避免生成后立刻切路由时 effect 尚未执行导致结果丢失。
+    saveClientDraft(DRAFT_KEYS.workspace(id), {
+      draft,
+      originalLyrics,
+      refinedLyrics,
+      selectedInputs,
+      coverSet,
+      quantity,
+      extraPrompt,
+      outputType,
+      phase: 'results',
+      brief,
+      briefId,
+      projectTitle,
+      generatedCandidates: mapped,
+      savedCandidateIds: [],
+      savedVersionIdMap: {},
+      versionNo: versionNo + Math.max(mapped.length, 1),
+      mainId: mapped[0]?.id ?? mainId,
+      selectedCandidateIds: mapped.map((c) => c.id),
+      hummingAsset,
+      referenceImage,
+    } satisfies WorkspaceSessionDraft)
   }
 
   /** PATCH /api/projects/[id]/draft：回写创作提示与当前歌词。 */
@@ -384,6 +451,55 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
     const createdId = await createProject()
     router.replace(`/create/${createdId}`)
     return createdId
+  }
+
+  /**
+   * 上传制作台素材（projectId scope）到 COS：intent → PUT → complete。
+   * 与灵感页 recordId scope 不同，这里归属项目，便于后续按项目聚合。
+   * 返回 COS 可读签名 URL（真实库 / mock 均可用），切路由/刷新不失效。
+   */
+  async function uploadMaterialAsset(file: File, kind: 'audio' | 'image'): Promise<MaterialAsset> {
+    const id = await ensureProject()
+    // 录音 mimeType 常带 codecs 后缀（如 audio/webm;codecs=opus），归一化为 base type 以通过后端校验。
+    const mimeType = (file.type || '').split(';')[0] || 'application/octet-stream'
+    const intentResponse = await fetch('/api/uploads/intents', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: id,
+        assetId: crypto.randomUUID(),
+        kind,
+        filename: file.name,
+        mimeType,
+        sizeBytes: file.size,
+      }),
+    })
+    const intent = await intentResponse.json() as {
+      ok: boolean
+      data?: { uploadId: string; url: string; method: 'PUT'; headers: Record<string, string> }
+      error?: { message?: string }
+    }
+    if (!intentResponse.ok || !intent.data) {
+      throw new Error(intent.error?.message || '无法创建上传任务')
+    }
+
+    const putResponse = await fetch(intent.data.url, {
+      method: intent.data.method,
+      headers: intent.data.headers,
+      body: file,
+    })
+    if (!putResponse.ok) throw new Error('文件上传失败，请检查网络后重试')
+
+    const completeResponse = await fetch(`/api/uploads/${intent.data.uploadId}/complete`, { method: 'POST' })
+    if (!completeResponse.ok) throw new Error('上传校验失败，请重试')
+    const completeBody = await completeResponse.json() as {
+      ok?: boolean
+      data?: { url?: string; objectKey?: string }
+    }
+    const url = completeBody.data?.url
+    const objectKey = completeBody.data?.objectKey
+    if (!url || !objectKey) throw new Error('上传完成但未返回可读地址')
+    return { url, objectKey, name: file.name }
   }
 
   /** 精修歌词：POST /api/creative-chat/stream；结果只写入 refinedLyrics，不覆盖原始输入。 */
@@ -542,12 +658,9 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
+    <>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <TopToolbar
-          provider={provider}
-          onProviderChange={(next) => { setProvider(next); markDirty() }}
           selectedInputs={selectedInputs}
           projectTitle={projectTitle}
           saveState={saveState}
@@ -555,7 +668,6 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
           currentVersion={versionNo ? `v${versionNo}` : '新项目'}
           onOpenVersions={() => setVersionsOpen(true)}
           onOpenShare={() => setShareOpen(true)}
-          onManageProviders={() => setProvidersOpen(true)}
           onOpenProjectSelect={() => setProjectSelectOpen(true)}
         />
         {/*
@@ -584,6 +696,12 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
               refinementMessage={refinementMessage}
               refinementError={refinementError}
               onRefine={() => void refineLyrics()}
+              onRefinedChange={(next) => { setRefinedLyrics(next); markDirty() }}
+              hummingAsset={hummingAsset}
+              referenceImage={referenceImage}
+              onUploadAsset={uploadMaterialAsset}
+              onHummingChange={(next) => { setHummingAsset(next); markDirty() }}
+              onImageChange={(next) => { setReferenceImage(next); markDirty() }}
               footer={
                 <WorkspacePrimaryAction
                   busy={busy}
@@ -629,10 +747,9 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
       </div>
       {saveError && <div role="alert" className="fixed bottom-5 left-1/2 z-[80] -translate-x-1/2 rounded-lg bg-destructive px-4 py-2 text-sm text-white shadow-lg">{saveError}</div>}
       <VersionModal open={versionsOpen} onClose={() => setVersionsOpen(false)} projectId={projectId} onApplied={applyRestoredLyrics} />
-      <ProviderModal open={providersOpen} onClose={() => setProvidersOpen(false)} current={provider} onSelect={setProvider} />
       <ShareModal open={shareOpen} onClose={() => setShareOpen(false)} />
       {/* 任务6：点击项目标题切换/新建项目；ProjectSelectDialog 自带 router 跳转，无需回调。 */}
       <ProjectSelectDialog open={projectSelectOpen} onClose={() => setProjectSelectOpen(false)} />
-    </div>
+    </>
   )
 }

@@ -73,8 +73,21 @@ export function Sidebar() {
     setCreateHref(last ? `/create/${last.id}` : '/create')
   }, [pathname])
 
-  // 最近歌曲 + 当前用户：挂载时拉一次（不再每次跳转都拉，避免 N 次串行查询拖慢导航）。
-  // 保存版本后会派发 sd:songs-changed 事件 → 仅在那一刻刷新最近歌曲。
+  // 当前用户：每次跳转刷新（廉价：getCurrentUser 已 cache 去重 + 1 次 upsert）。
+  // 必须 refetch——Sidebar 在 (app) 段只挂载一次，挂载时若 session 尚未就绪需靠下次跳转恢复，
+  // 否则会卡在「未登录」（登入竞态）。
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/profile')
+      .then(async (r) => {
+        const body = (await r.json()) as ProfileEnvelope
+        if (!cancelled && r.ok && body.ok && body.data) setProfile(body.data)
+      })
+      .catch(() => { /* 取数失败保持 null */ })
+    return () => { cancelled = true }
+  }, [pathname])
+
+  // 最近歌曲：挂载时拉一次 + 保存版本事件刷新（不再每次跳转都拉，避免拖慢导航）。
   useEffect(() => {
     let cancelled = false
     const loadSongs = () => {
@@ -86,16 +99,7 @@ export function Sidebar() {
         .catch(() => { /* fetch 失败走空状态，不抛错 */ })
         .finally(() => { if (!cancelled) setLoaded(true) })
     }
-    const loadProfile = () => {
-      fetch('/api/profile')
-        .then(async (r) => {
-          const body = (await r.json()) as ProfileEnvelope
-          if (!cancelled && r.ok && body.ok && body.data) setProfile(body.data)
-        })
-        .catch(() => { /* 取数失败保持 null，用户区显示未登录态 */ })
-    }
     loadSongs()
-    loadProfile()
     window.addEventListener('sd:songs-changed', loadSongs)
     return () => {
       cancelled = true

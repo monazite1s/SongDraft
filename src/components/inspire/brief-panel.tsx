@@ -24,11 +24,9 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
-  OUTPUT_TYPES,
   coverFromTitle,
   type CreativeBrief,
   type DemoCandidate,
-  type OutputType,
 } from '@/lib/inspire-data'
 import { QUANTITIES, type Busy, type Phase } from './action-column'
 import { Button } from '@/components/ui/button'
@@ -37,8 +35,6 @@ import { Chip, RadioTags } from './ui'
 function Skeleton({ className }: { className?: string }) {
   return <div className={cn('animate-pulse rounded-md bg-muted', className)} />
 }
-
-const OUTPUT_OPTIONS = OUTPUT_TYPES.map((o) => ({ value: o.id, label: o.label }))
 
 /**
  * 可折叠模块卡片（SPEC §6.3 OutcomeCollapsibleCard）。
@@ -62,7 +58,7 @@ function CollapsibleCard({
   children: React.ReactNode
 }) {
   return (
-    <section className="rounded-xl border border-border bg-card shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+    <section className="min-w-0 overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
       <button
         type="button"
         onClick={onToggle}
@@ -112,8 +108,6 @@ function BriefSection({
   collapsed,
   onToggle,
   onBriefChange,
-  outputType,
-  onOutputChange,
   extraPrompt,
   onExtraPromptChange,
   quantity,
@@ -127,8 +121,6 @@ function BriefSection({
   onToggle: () => void
   /** 把 theme/priority 编辑写回 workspace 的 brief state，保证生成时 PATCH 带上最新值。 */
   onBriefChange: (field: 'theme' | 'priority', value: string) => void
-  outputType: OutputType
-  onOutputChange: (value: OutputType) => void
   extraPrompt: string
   onExtraPromptChange: (value: string) => void
   quantity: number
@@ -141,7 +133,6 @@ function BriefSection({
   const [editing, setEditing] = useState(false)
   // theme/priority 直接以 brief 为唯一数据源（受控），编辑 onChange 即写回 workspace，
   // 不再持有会被丢弃的本地 state。
-  const outputName = OUTPUT_TYPES.find((o) => o.id === outputType)!
 
   return (
     <CollapsibleCard
@@ -151,7 +142,7 @@ function BriefSection({
       title="创意简报"
       summary={
         <span className="truncate">
-          {outputName.label} · 生成 {quantity} 条 · {brief.theme}
+          生成 {quantity} 条 · {brief.theme}
         </span>
       }
     >
@@ -169,14 +160,6 @@ function BriefSection({
           ) : (
             <p className="text-sm font-medium text-foreground">{brief.theme}</p>
           )}
-        </div>
-
-        {/* 输出类型：必选且互斥的 Tag 单选（SPEC §0 / §6.4）。 */}
-        <div>
-          <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            输出类型
-          </p>
-          <RadioTags value={outputType} options={OUTPUT_OPTIONS} onChange={onOutputChange} />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -355,7 +338,7 @@ function CandidateCard({
       }}
       title="查看详情"
       className={cn(
-        'group flex cursor-pointer items-center gap-3 rounded-xl border bg-card p-3 text-left transition-colors',
+        'group flex min-w-0 w-full cursor-pointer items-center gap-3 overflow-hidden rounded-xl border bg-card p-3 text-left transition-colors',
         selected
           ? 'border-brand/60 ring-1 ring-brand/20'
           : isMain
@@ -483,7 +466,7 @@ function ResultsSection({
             </p>
           </div>
         ) : (
-          <div className="grid gap-3">
+          <div className="grid min-w-0 gap-3">
             {candidates.map((c) => (
               <CandidateCard
                 key={c.id}
@@ -538,8 +521,6 @@ export function BriefPanel({
   busy,
   brief,
   onBriefChange,
-  outputType,
-  onOutputChange,
   extraPrompt,
   onExtraPromptChange,
   quantity,
@@ -560,8 +541,6 @@ export function BriefPanel({
   brief: CreativeBrief
   /** 把 theme/priority 编辑写回 workspace 的 brief state。 */
   onBriefChange: (field: 'theme' | 'priority', value: string) => void
-  outputType: OutputType
-  onOutputChange: (value: OutputType) => void
   extraPrompt: string
   onExtraPromptChange: (value: string) => void
   quantity: number
@@ -631,14 +610,12 @@ export function BriefPanel({
   }
 
   return (
-    <div className="space-y-4 p-4">
+    <div className="min-w-0 space-y-4 p-4">
       <BriefSection
         brief={brief}
         collapsed={briefCollapsed}
         onToggle={() => setBriefCollapsed((v) => !v)}
         onBriefChange={onBriefChange}
-        outputType={outputType}
-        onOutputChange={onOutputChange}
         extraPrompt={extraPrompt}
         onExtraPromptChange={onExtraPromptChange}
         quantity={quantity}

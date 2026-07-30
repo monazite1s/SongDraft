@@ -1,8 +1,8 @@
 /**
  * 歌词模型适配器（docs/technical-design.md §3、§6）
  *
- * LyricAssistant 统一契约；真实模式走 DeepSeek chat/completions + JSON Output，
- * 无 Key 或 TEXT_PROVIDER_MODE=mock 时使用确定性 Mock，不得伪装为真实 Provider。
+ * LyricAssistant 统一契约；走 DeepSeek chat/completions + JSON Output。
+ * 未配置 Key 时抛 PROVIDER_NOT_CONFIGURED，不返回写死歌词。
  */
 import type { ArtistProfile } from "@/modules/artists/artist-types";
 
@@ -45,29 +45,7 @@ export interface LyricAssistant {
   createDraft(input: CreativeChatInput): Promise<AssistantDraft>;
 }
 
-function buildLyrics(artist: ArtistProfile | null, eventTitle: string, message: string) {
-  const wish = message.replace(/[@#]/g, "").trim().slice(0, 30) || "把共同的回忆唱给你听";
-  const subject = artist?.name ?? "远方的你";
-  const chorus = artist ? `${artist.fandomName} 的声音，汇成最亮的星系\n${artist.slogan}` : "让每一句心声，汇成最亮的星系\n穿过夜色以后，我们仍然相信";
-  return `《把光唱给你》\n\n[主歌 A]\n从第一声呼喊走到今天\n我们把微小的心愿写成诗篇\n${eventTitle} 的灯光再次亮起\n每一步都有彼此留在身边\n\n[预副歌]\n${wish}\n让熟悉的名字穿过人海\n\n[副歌]\n${subject}，向前走吧，我们都在这里\n${chorus}\n这一次让全场，把约定唱给你听\n\n[桥段]\n不是短暂相遇，是年复一年的回应\n等下一次灯亮，我们还会并肩同行`;
-}
-
-export class MockLyricAssistant implements LyricAssistant {
-  async createDraft(input: CreativeChatInput): Promise<AssistantDraft> {
-    const context: CreativeContext = { artistId: input.artist?.id ?? null, eventIds: input.eventIds, emotion: "温暖坚定", singingMode: "chorus", executionKind: "simulated" };
-    const event = input.artist?.events.find((item) => input.eventIds.includes(item.id)) ?? input.artist?.events[0];
-    const asksForRevision = Boolean(input.currentLyrics) && /(修改|更|副歌|坚定|温柔|押韵|合唱)/.test(input.message);
-    const lyrics = asksForRevision
-      ? `${input.currentLyrics!.replace("[副歌]", "[副歌 · 全场合唱]")}\n\n（本轮根据“${input.message.slice(0, 24)}”强化了合唱表达。）`
-      : buildLyrics(input.artist, event?.title ?? "这次相遇", input.message);
-    const message = asksForRevision
-      ? `我已经按你的意见调整歌词，并把副歌处理得更适合全场合唱。右侧正在同步最新版本。`
-      : input.artist ? `我以「${event?.title ?? "共同回忆"}」为背景整理了一版歌词，重点保留简单易唱的副歌和 ${input.artist.fandomName} 的专属记忆。` : "我已经根据创作提示整理了一版完整歌词，并强化了段落结构和副歌记忆点。";
-    return { message, lyrics, context };
-  }
-}
-
-/** DeepSeek V4 Flash：系统 Prompt + 历史消息 + 结构化 user payload → Zod 校验 JSON。 */
+/** DeepSeek V4 Flash：系统 Prompt + 历史消息 + 结构化 user payload → Zod 校验 JSON。未配置 Key 抛错，不造假。 */
 export class DeepSeekLyricAssistant implements LyricAssistant {
   constructor(
     private readonly apiKey = process.env.DEEPSEEK_API_KEY,
@@ -122,7 +100,7 @@ export class DeepSeekLyricAssistant implements LyricAssistant {
   }
 }
 
-/** 按环境变量选择 DeepSeek 或透明 Mock（失败不回退伪装）。 */
+/** 文本生成一律走 DeepSeek（未配置 Key 时适配器抛 PROVIDER_NOT_CONFIGURED，不返回写死歌词）。 */
 export function getLyricAssistant(): LyricAssistant {
-  return process.env.NODE_ENV !== "test" && process.env.DEEPSEEK_API_KEY && process.env.TEXT_PROVIDER_MODE !== "mock" ? new DeepSeekLyricAssistant() : new MockLyricAssistant();
+  return new DeepSeekLyricAssistant();
 }

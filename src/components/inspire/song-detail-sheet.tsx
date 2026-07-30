@@ -8,7 +8,8 @@
  * - 候选阶段（未保存为版本）无 versionId，「进入全屏详情」禁用并提示先保存为版本。
  * - 已保存为版本时，提供 Link → /works/${projectId}/v/${versionId}。
  */
-import { X, Maximize2, FileAudio, Lock } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { X, Maximize2, FileAudio, Lock, Loader2 } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
@@ -53,7 +54,7 @@ export function SongDetailSheet({
     <aside
       aria-label="歌曲详情栏"
       className={cn(
-        'scrollbar-none flex min-w-0 flex-col border-l border-border bg-card/40 xl:overflow-y-auto',
+        'scrollbar-none flex min-w-0 flex-col overflow-hidden border-l border-border bg-card/40 xl:overflow-y-auto',
       )}
     >
       <header className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
@@ -78,9 +79,9 @@ export function SongDetailSheet({
           </p>
         </div>
       ) : (
-        <div className="flex-1 space-y-4 p-4">
+        <div className="min-w-0 flex-1 space-y-4 overflow-x-hidden p-4">
           {/* 封面占位 + 标题 + 版本 */}
-          <div className="flex gap-3">
+          <div className="flex min-w-0 gap-3">
             <div className="relative size-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted">
               {c.cover ? (
                 <Image src={c.cover} alt={c.title} fill className="object-cover" />
@@ -113,13 +114,9 @@ export function SongDetailSheet({
             </div>
           </div>
 
-          {/* 统一播放器 */}
-          <div className="rounded-lg border border-border bg-background p-3">
-            {c.audioUrl ? (
-              <audio controls preload="metadata" src={c.audioUrl} className="h-9 w-full" aria-label={`${c.title} 播放器`} />
-            ) : (
-              <AudioPlayer durationLabel={c.duration} seed={hashSeed(c.id)} bars={40} />
-            )}
+          {/* 统一播放器：打开详情时重签 URL，避免 session 缓存签名过期 */}
+          <div className="min-w-0 overflow-hidden rounded-lg border border-border bg-background p-3">
+            <CandidateAudioPlayer candidate={c} />
           </div>
 
           {/* 元信息 */}
@@ -129,15 +126,15 @@ export function SongDetailSheet({
               ['提供方', PROVIDERS.find((p) => p.id === c.providerId)?.name ?? '—'],
               ['时长', c.duration],
             ].map(([k, v]) => (
-              <div key={k} className="flex justify-between rounded-md border border-border bg-background px-2 py-1.5">
-                <dt className="text-muted-foreground">{k}</dt>
+              <div key={k} className="flex min-w-0 justify-between gap-2 rounded-md border border-border bg-background px-2 py-1.5">
+                <dt className="shrink-0 text-muted-foreground">{k}</dt>
                 <dd className="truncate font-medium text-foreground">{v}</dd>
               </div>
             ))}
           </dl>
 
           {/* 描述 */}
-          <div>
+          <div className="min-w-0">
             <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               创作说明
             </p>
@@ -145,7 +142,7 @@ export function SongDetailSheet({
           </div>
 
           {/* 歌词摘要 */}
-          <div>
+          <div className="min-w-0">
             <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               歌词摘要
             </p>
@@ -179,4 +176,71 @@ export function SongDetailSheet({
       )}
     </aside>
   )
+}
+
+/** 打开详情时向服务端重签播放地址；失败则回退候选自带 audioUrl。 */
+function CandidateAudioPlayer({ candidate }: { candidate: DemoCandidate }) {
+  const initial = candidate.audioUrl ?? null
+  const [playUrl, setPlayUrl] = useState<string | null>(initial)
+  const [loading, setLoading] = useState(Boolean(initial || candidate.mode === 'real'))
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    setPlayUrl(candidate.audioUrl ?? null)
+    setError('')
+    // 有真实音频线索时尝试重签（含 session 里已过期的签名 URL）。
+    if (!candidate.audioUrl && candidate.mode !== 'real') {
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    void (async () => {
+      try {
+        const res = await fetch(`/api/generation-candidates/${candidate.id}/play`)
+        const body = await res.json() as { ok?: boolean; data?: { url?: string }; error?: { message?: string } }
+        if (cancelled) return
+        if (res.ok && body.data?.url) {
+          setPlayUrl(body.data.url)
+        } else if (!candidate.audioUrl) {
+          setError(body.error?.message || '无法获取播放地址')
+        }
+      } catch {
+        if (!cancelled && !candidate.audioUrl) setError('无法获取播放地址')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [candidate.id, candidate.audioUrl, candidate.mode])
+
+  if (loading && !playUrl) {
+    return (
+      <div className="flex h-9 items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="size-3.5 animate-spin" />
+        准备播放…
+      </div>
+    )
+  }
+
+  if (playUrl) {
+    return (
+      <audio
+        key={playUrl}
+        controls
+        preload="metadata"
+        src={playUrl}
+        className="block h-9 w-full max-w-full"
+        style={{ minWidth: 0 }}
+        aria-label={`${candidate.title} 播放器`}
+        onError={() => setError('音频加载失败，请稍后重试')}
+      />
+    )
+  }
+
+  if (error) {
+    return <p className="text-xs text-destructive">{error}</p>
+  }
+
+  return <AudioPlayer durationLabel={candidate.duration} seed={hashSeed(candidate.id)} bars={40} />
 }

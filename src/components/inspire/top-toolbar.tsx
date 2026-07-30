@@ -62,7 +62,6 @@ export function TopToolbar({
   projectTitle,
   saveState,
   onSave,
-  currentVersion,
   onOpenVersions,
   onOpenShare,
   onOpenProjectSelect,
@@ -71,7 +70,6 @@ export function TopToolbar({
   projectTitle: string
   saveState: 'dirty' | 'saving' | 'saved' | 'error'
   onSave: () => void
-  currentVersion: string
   onOpenVersions: () => void
   onOpenShare: () => void
   /** 任务6：点击项目标题切换/新建项目，弹出 ProjectSelectDialog。 */
@@ -184,10 +182,11 @@ export function TopToolbar({
         {/* version indicator */}
         <button
           onClick={onOpenVersions}
-          className="hidden h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm text-foreground transition-colors hover:bg-muted md:flex"
+          aria-label="版本历史"
+          title="版本历史"
+          className="hidden size-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground md:flex"
         >
-          <GitBranch className="size-3.5 text-muted-foreground" />
-          {currentVersion}
+          <GitBranch className="size-3.5" />
         </button>
 
         <button

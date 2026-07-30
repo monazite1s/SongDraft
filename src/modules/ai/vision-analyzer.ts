@@ -5,7 +5,7 @@
  *   POST https://open.bigmodel.cn/api/paas/v4/chat/completions，image_url 传公网 HTTPS 直链。
  * 输出 ≤120 字的「场景/情绪/色彩/氛围/建议乐器风格」描述，由 generation-service 注入音乐 prompt
  * 的「视觉意象」槽，使 文本歌词 + 音频哼唱 + 图像意象 三模态在同一生成调用里共同参与创作。
- * 无 Key 或 VISION_PROVIDER_MODE=mock 时使用确定性 Mock，不冒充外部结果。
+ * 未配置 Key 时抛 PROVIDER_NOT_CONFIGURED，不返回写死数据。
  */
 import "server-only";
 
@@ -53,13 +53,6 @@ function normalizeContent(raw: unknown): string {
   return "";
 }
 
-export class MockVisionAnalyzer implements VisionAnalyzer {
-  async analyzeImage(_imageUrl: string): Promise<string> {
-    return "暖色调夜景、湿润路面反光，画面安静克制；建议轻拨弦与合成 Pad，氛围偏 Dream Pop。";
-  }
-}
-
-/** GLM-4V：参考图片 HTTPS 直链 → 音乐意象文字描述。 */
 export class GlmVisionAnalyzer implements VisionAnalyzer {
   constructor(
     private readonly apiKey = process.env.ZHIPU_API_KEY,
@@ -98,9 +91,7 @@ export class GlmVisionAnalyzer implements VisionAnalyzer {
   }
 }
 
-/** 按环境变量选择 GLM-4V 或透明 Mock（失败由调用方 catch 回退，不冒充成功）。 */
+/** 图生文一律走 GLM-4V（未配置 Key 时适配器抛 PROVIDER_NOT_CONFIGURED，不返回写死数据）。 */
 export function getVisionAnalyzer(): VisionAnalyzer {
-  return process.env.NODE_ENV !== "test" && process.env.ZHIPU_API_KEY && process.env.VISION_PROVIDER_MODE !== "mock"
-    ? new GlmVisionAnalyzer()
-    : new MockVisionAnalyzer();
+  return new GlmVisionAnalyzer();
 }

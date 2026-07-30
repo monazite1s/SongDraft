@@ -50,6 +50,10 @@ export class TencentCosStorage implements ObjectStorage {
   }
 
   async createDownload(objectKey: string, expiresInSeconds: number) {
+    // 对生成音频强制 response-content-type，避免历史对象以 octet-stream 入库导致 <audio> 拒播。
+    const query = objectKey.startsWith("generated/")
+      ? { "response-content-type": "audio/mpeg" }
+      : undefined;
     return this.cos.getObjectUrl({
       Bucket: this.config.bucket,
       Region: this.config.region,
@@ -58,6 +62,7 @@ export class TencentCosStorage implements ObjectStorage {
       Sign: true,
       Expires: expiresInSeconds,
       Protocol: "https:",
+      ...(query ? { Query: query } : {}),
     });
   }
 

@@ -83,26 +83,22 @@ export interface CreativeBrief {
   priority: string
 }
 
+/**
+ * 简报初始空态：所有创作字段（主题/风格/速度/情绪/乐器/歌词概要/旋律特征/视觉参考/证据/冲突/优先策略）
+ * 一律留空，仅由 DeepSeek 生成后填充——不预置任何写死内容。
+ */
 export const DEFAULT_BRIEF: CreativeBrief = {
-  theme: '深夜城市里的独处与释然',
-  mood: ['忧郁', '克制', '温暖尾声'],
-  genre: 'Indie Pop / Dream Pop',
-  tempo: '84 BPM · 4/4',
-  instruments: ['电钢琴', '合成 Pad', '轻拨弦', '低频贝斯', '细碎打击乐'],
-  lyricSummary:
-    '以第一人称叙述雨夜独自走过街道的片段，副歌收束到「与自己和解」的情绪。',
-  melodyFeatures:
-    '主歌音域较窄、以级进为主；副歌出现一次八度跳进，句尾有明显重复动机。',
-  visualReferences: '湿润路面反光、暖色店招、冷色调夜景，画面安静克制。',
-  evidence: [
-    { source: '歌词', detail: '「路灯把影子拉得很长」→ 夜晚、独处意象' },
-    { source: '哼唱', detail: '副歌八度跳进 → 情绪抬升点' },
-    { source: '图像', detail: '主色冷调 + 暖点光源 → Dream Pop 质感' },
-  ],
-  conflicts: [
-    '歌词偏民谣叙事，但哼唱律动更接近流行，需要在编曲上折中。',
-  ],
-  priority: '优先保留哼唱的副歌动机，其次匹配图像的冷暖对比配色。',
+  theme: '',
+  mood: [],
+  genre: '',
+  tempo: '',
+  instruments: [],
+  lyricSummary: '',
+  melodyFeatures: '',
+  visualReferences: '',
+  evidence: [],
+  conflicts: [],
+  priority: '',
 }
 
 export interface PlanStep {

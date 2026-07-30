@@ -268,8 +268,8 @@ export function InspirationRecordPage() {
   function selectKind(next: CaptureKind) { setKind(next); }
 
   return (
-    <main className="min-h-screen bg-background px-4 py-5 sm:px-7 lg:px-10 lg:py-8">
-      <div className="mx-auto max-w-5xl">
+    <main className="min-h-screen bg-background">
+      <div className="mx-auto max-w-5xl p-4 sm:p-6 lg:p-8">
         <header className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-brand"><Lightbulb className="size-4" /><span className="text-sm font-medium">灵感记录</span></div>
@@ -279,7 +279,7 @@ export function InspirationRecordPage() {
           <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex"><span className={cn("size-2 rounded-full", status === "error" ? "bg-destructive" : status === "saved" ? "bg-success" : "bg-muted-foreground/40")} />{status === "saving" ? "正在保存" : status === "saved" ? "已自动保存" : "私有草稿"}</div>
         </header>
 
-        <section className="mt-7 overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+        <section className="mt-4 overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:mt-6">
           {/* pill 风格 tab：参照 material-panel TABS（flex gap-1 + 每项 rounded-lg border + 选中 shadow + 指示点）。 */}
           <div role="tablist" aria-label="灵感类型" className="flex gap-1 border-b border-border p-2">
             {kindTabs.map((tab) => {

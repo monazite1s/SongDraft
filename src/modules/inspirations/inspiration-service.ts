@@ -1,4 +1,5 @@
 import type { AuthUser } from "@/modules/auth/types";
+import { linkMockRecordUploadsToProject } from "@/modules/inspiration/upload-repository";
 import { DomainError } from "@/shared/errors/domain-error";
 import { inspirationAttachmentSchema } from "./attachment-schema";
 import {
@@ -87,6 +88,10 @@ export class InspirationService {
     const attached = await this.repository.attach(recordId, owner, destination);
     if (!attached) {
       throw new DomainError("PROJECT_NOT_FOUND", 404, "目标项目不存在或无权访问");
+    }
+    // Mock：record 作用域上传不会随 attach 进项目，需显式挂载，制作台才能回填音频/图片。
+    if (!process.env.DATABASE_URL && attached.projectId) {
+      linkMockRecordUploadsToProject(recordId, attached.projectId, owner.id);
     }
     return attached;
   }

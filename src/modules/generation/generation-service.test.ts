@@ -1,11 +1,16 @@
-import { expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
+import { MOCK_BRIEF_PAYLOAD, mockDeepSeekFetch, setDeepSeekKeyForTest } from "@/modules/ai/__fixtures__/deepseek-mock";
 import { BriefService } from "@/modules/projects/brief-service";
 import { MockProjectRepository } from "@/modules/projects/project-repository";
 import { ProjectService } from "@/modules/projects/project-service";
 import { GenerationService } from "./generation-service";
 
 const owner = { id: "00000000-0000-4000-8000-000000000078", email: "generation@example.test", displayName: "生成测试" };
+
+// 简报生成强制走 DeepSeek：测试用 mock fetch 喂回合法简报 JSON；音乐仍走 MockMusicGenerator（测试环境）。
+beforeEach(() => { setDeepSeekKeyForTest(); mockDeepSeekFetch({ brief: MOCK_BRIEF_PAYLOAD }); });
+afterEach(() => vi.restoreAllMocks());
 
 async function seedBrief(ownerId: typeof owner, projectId: string, quantity: number) {
   const briefs = new BriefService();
@@ -63,10 +68,11 @@ test("generates unsaved candidates from the confirmed brief, then restores and b
   expect(finalViews.find((v) => v.id === savedBranch[0]!.id)!.parentId).toBe(saved[0]!.id);
   expect(finalViews.filter((v) => v.parentId === saved[0]!.id).map((v) => v.id).sort()).toEqual([savedBranch[0]!.id, savedV2[0]!.id].sort());
 
-  // 兄弟命名：v1（根）/ v2（主链首子）/ v2.1（回退 v1 后保存的兄弟分支）。
+  // 标签与歌曲 versionNo 一致：v1 / v2 / v3（分叉不另造 v2.1，避免与详情页 V{n} 对不上）。
   expect(finalViews.find((v) => v.id === saved[0]!.id)!.label).toBe("v1");
   expect(finalViews.find((v) => v.id === savedV2[0]!.id)!.label).toBe("v2");
-  expect(finalViews.find((v) => v.id === savedBranch[0]!.id)!.label).toBe("v2.1");
+  expect(finalViews.find((v) => v.id === savedBranch[0]!.id)!.label).toBe("v3");
+  expect(finalViews.find((v) => v.id === savedBranch[0]!.id)!.versionNo).toBe(3);
 
   if (original) process.env.DATABASE_URL = original;
 });

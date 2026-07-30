@@ -97,7 +97,6 @@ test('bootWorkspace restores persisted session draft instead of server initial v
     coverSet: false,
     quantity: 3,
     extraPrompt: '',
-    outputType: 'song',
     phase: 'idle',
     brief: DEFAULT_BRIEF,
     briefId: null,
@@ -108,4 +107,42 @@ test('bootWorkspace restores persisted session draft instead of server initial v
   // 会话草稿的歌词优先于服务端 initialProject.lyrics（bug 1 修复：草稿持久化）。
   const lyrics = screen.getByPlaceholderText('输入歌词或文本') as HTMLTextAreaElement
   expect(lyrics.value).toBe('用户输入的未保存歌词')
+})
+
+test('bootWorkspace hydrates humming and image materials from project assets', async () => {
+  const projectWithAssets: ProjectDetail = {
+    ...baseProject,
+    id: 'project-with-assets',
+    combination: 'melody+text+visual',
+    assets: [
+      {
+        id: 'a1',
+        kind: 'audio',
+        content: null,
+        included: true,
+        status: 'ready',
+        originalName: 'hum.webm',
+        objectKey: 'dev/u1/audio/hum.webm',
+        previewUrl: 'https://example.test/hum.webm',
+      },
+      {
+        id: 'i1',
+        kind: 'image',
+        content: null,
+        included: true,
+        status: 'ready',
+        originalName: 'ref.jpg',
+        objectKey: 'dev/u1/image/ref.jpg',
+        previewUrl: 'https://example.test/ref.jpg',
+      },
+    ],
+  }
+
+  render(<SongDraftWorkspace initialProject={projectWithAssets} />)
+
+  // 原料区默认在歌词 tab；切换到音频/图片 tab 验证回填。
+  fireEvent.click(screen.getByRole('button', { name: '哼唱 / 音频' }))
+  expect(await screen.findByText('hum.webm')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '图像 / 视频' }))
+  expect(await screen.findByText('ref.jpg')).toBeTruthy()
 })

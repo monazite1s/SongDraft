@@ -26,7 +26,7 @@ import {
   type NodeProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Crown, Trash2, Check, MousePointerClick, Loader2 } from 'lucide-react'
+import { Crown, Trash2, Check, MousePointerClick, Loader2, GitBranch } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Modal } from './modal'
@@ -45,7 +45,7 @@ export interface VersionView {
   audioUrl?: string | null
   restoredFromVersionId?: string | null
   parentId?: string | null
-  /** git 式展示标签（v1 / v2 / v1.1…），由后端按 parentId 拓扑计算。 */
+  /** git 式展示标签：与歌曲 versionNo 一致（v1 / v2 / v3…），非树拓扑重编号。 */
   label?: string
 }
 
@@ -56,7 +56,7 @@ type VersionNodeData = {
   selected: boolean
 }
 
-const NODE_WIDTH = 232
+const NODE_WIDTH = 200
 const NODE_GAP_Y = 118
 const TOP_MARGIN = 8
 
@@ -83,7 +83,12 @@ function VersionNode({ data }: NodeProps) {
     >
       <Handle type="target" position={Position.Top} className="!size-2 !border-border !bg-border" />
       <div className="flex items-center gap-2">
-        <span className="text-sm font-semibold text-foreground">{version.label ?? `v${version.versionNo}`}</span>
+        <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground" aria-hidden>
+          <GitBranch className="size-3.5" />
+        </span>
+        <span className="text-sm font-semibold text-foreground">
+          {version.label ?? `v${version.versionNo}`}
+        </span>
         {version.isMain && (
           <span className="inline-flex items-center gap-1 rounded-full bg-brand px-1.5 py-0.5 text-[10px] font-medium text-brand-foreground">
             <Crown className="size-2.5" />
@@ -102,7 +107,9 @@ function VersionNode({ data }: NodeProps) {
           role="tooltip"
           className="pointer-events-none absolute left-full top-1/2 z-20 ml-3 w-60 -translate-y-1/2 rounded-lg border border-border bg-popover p-3 text-left shadow-lg"
         >
-          <p className="text-xs font-semibold text-foreground">{version.label ?? `v${version.versionNo}`} · {version.title}</p>
+          <p className="text-xs font-semibold text-foreground">
+            {version.label ?? `v${version.versionNo}`} · {version.title}
+          </p>
           <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{version.variation}</p>
           <div className="mt-1.5 flex items-center justify-between text-[10px] text-muted-foreground">
             <span>{version.hasAudio ? '含音频' : '无音频'}</span>
@@ -296,7 +303,11 @@ function VersionTree({ projectId, open, onApplied }: { projectId: string; open: 
           <MousePointerClick className="size-3.5 shrink-0" />
           {selected ? (
             <span className="truncate">
-              已选择 <span className="font-medium text-foreground">{selected.label ?? `v${selected.versionNo}`}</span> · {selected.title}
+              已选择{' '}
+              <span className="font-medium text-foreground">
+                {selected.label ?? `v${selected.versionNo}`}
+              </span>
+              {' '}· {selected.title}
             </span>
           ) : (
             '点击版本节点选择，hover 查看详情'

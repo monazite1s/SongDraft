@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 
 import type { InspirationSnapshot } from "@/modules/inspirations/inspiration-schema";
-import { DeepSeekInspirationEnricher, MockInspirationEnricher } from "./inspiration-enricher";
+import { DeepSeekInspirationEnricher } from "./inspiration-enricher";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -21,43 +21,6 @@ function textSnapshot(overrides: Partial<InspirationSnapshot["text"] & { title: 
     },
   };
 }
-
-test("mock enricher 补全空缺字段并标记为 simulated", async () => {
-  const result = await new MockInspirationEnricher().enrich(textSnapshot());
-  expect(result.mode).toBe("simulated");
-  expect(result.title).toBeTruthy();
-  expect(result.moods).not.toBeNull();
-  expect(result.moods!.length).toBeGreaterThan(0);
-  expect(result.speedFeel).not.toBeNull();
-  expect(result.soundHints).toBeTruthy();
-  expect(result.referenceWorks).toBeTruthy();
-});
-
-test("mock enricher 不覆盖用户已填字段", async () => {
-  const snapshot = textSnapshot({
-    title: "雨夜",
-    tags: ["怀旧"],
-    moods: ["克制"],
-    speedFeel: "slow",
-    soundHints: "钢琴",
-    referenceWorks: "Beach House",
-  });
-  const result = await new MockInspirationEnricher().enrich(snapshot);
-  // 用户已填的字段不应出现在补全结果中。
-  expect(result.title).toBeNull();
-  expect(result.moods).toBeNull();
-  expect(result.speedFeel).toBeNull();
-  expect(result.soundHints).toBeNull();
-  expect(result.referenceWorks).toBeNull();
-});
-
-test("mock enricher 对空内容返回更克制的补全", async () => {
-  const snapshot = textSnapshot({ content: "" });
-  // 空内容无法构成有效 text snapshot，但 enricher 应容忍并基于空输入给默认建议。
-  const result = await new MockInspirationEnricher().enrich(snapshot);
-  expect(result.mode).toBe("simulated");
-  expect(result.moods).not.toBeNull();
-});
 
 test("DeepSeek enricher 解析结构化 JSON 并剔除用户已填字段", async () => {
   const request = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({

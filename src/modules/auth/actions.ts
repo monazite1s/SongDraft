@@ -63,12 +63,20 @@ export async function registerAction(formData: FormData) {
 
   const { displayName, email, password, redirect: _redirect } = parsed.data;
   const supabase = await createAuthServerClient();
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: { data: { display_name: displayName } },
   });
-  if (error) redirect(`/register?error=${encodeURIComponent("注册失败，请稍后重试")}`);
+  if (error) {
+    // 透出 Supabase 真实错误（status/code/message），便于定位：captcha、限流、已注册等。
+    console.error("[auth] signUp 失败 status=", error.status, "code=", error.code, "msg=", error.message);
+    redirect(`/register?error=${encodeURIComponent(`注册失败：${error.message}`)}`);
+  }
+  // signUp 成功但无 session：通常是 Supabase 开启了「邮箱确认」。此时用户尚未确认，无法直接登录。
+  if (!data.session) {
+    redirect(`/register?error=${encodeURIComponent("已创建账号，但 Supabase 开启了邮箱确认——需到邮箱点确认链接后才能登录；或在 Supabase 关闭 Confirm email。")}`);
+  }
   redirect("/");
 }
 

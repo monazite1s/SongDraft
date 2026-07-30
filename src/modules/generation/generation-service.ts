@@ -95,6 +95,20 @@ function toCandidateView(row: typeof generationCandidates.$inferSelect): DemoCan
   };
 }
 
+/** 按 cosObjectKey / 真实 objectKey 重新签发播放 URL，避免列内签名过期后无法播放。 */
+async function toCandidateViewFresh(row: typeof generationCandidates.$inferSelect): Promise<DemoCandidate> {
+  const base = toCandidateView(row);
+  const cosKey = typeof row.metadata?.cosObjectKey === "string" ? row.metadata.cosObjectKey : null;
+  const objectKey = row.objectKey && !row.objectKey.startsWith("external://") && !row.objectKey.startsWith("mock://")
+    ? row.objectKey
+    : null;
+  const fallback = typeof row.metadata?.audioUrl === "string"
+    ? row.metadata.audioUrl
+    : (typeof row.audioUrl === "string" ? row.audioUrl : null);
+  const audioUrl = await resolveAudioUrl(cosKey ?? objectKey, fallback);
+  return { ...base, hasAudio: Boolean(audioUrl), audioUrl };
+}
+
 /** 受控并发（最多 2）执行批量生成，避免 Provider 拥塞。 */
 async function generateDemos(quantity: number, input: MusicGenerationInput): Promise<GeneratedDemo[]> {
   const indices = Array.from({ length: quantity }, (_, i) => i);
@@ -111,45 +125,13 @@ async function generateDemos(quantity: number, input: MusicGenerationInput): Pro
 }
 
 /**
- * 计算 git 式版本标签（兄弟命名）：
- * - 主链（每代首个子节点）v1→v2→v3 递增；
- * - 同一代的分叉分支与主链子节点同级，命名 v{N}.1 / v{N}.2 …（N = 该代主链编号）。
- *   例：v1 的子代为 v2（主链）、v2.1、v2.2（回退 v1 后保存产生的兄弟分支）。
- * parentId 悬空（指向已删/不存在版本）的节点回退为根，消除游离。
+ * 版本展示标签：与歌曲详情/作品页一致，一律用真实 versionNo（v1、v2、v3…）。
+ * 不做 git 式重编号（v2.1 等），避免弹窗标签与歌曲 V{n} 对不上。
+ * 版本树父子关系仍由 parentId 布局表达，与编号解耦。
  */
 function computeVersionLabels(versions: DemoVersionView[]): Map<string, string> {
-  const byId = new Map(versions.map((v) => [v.id, v]));
-  const childrenOf = new Map<string, DemoVersionView[]>();
-  const roots: DemoVersionView[] = [];
-  for (const v of versions) {
-    const pid = v.parentId && byId.has(v.parentId) ? v.parentId : null;
-    if (!pid) roots.push(v);
-    else {
-      const arr = childrenOf.get(pid) ?? [];
-      arr.push(v);
-      childrenOf.set(pid, arr);
-    }
-  }
-  const sortAsc = (a: DemoVersionView, b: DemoVersionView) => a.versionNo - b.versionNo;
-  roots.sort(sortAsc);
-  for (const arr of childrenOf.values()) arr.sort(sortAsc);
   const labels = new Map<string, string>();
-  const bump = (label: string): string => {
-    const parts = label.replace(/^v/, "").split(".");
-    parts[parts.length - 1] = String(Number(parts[parts.length - 1]) + 1);
-    return `v${parts.join(".")}`;
-  };
-  const assign = (node: DemoVersionView, label: string) => {
-    labels.set(node.id, label);
-    const kids = childrenOf.get(node.id) ?? [];
-    if (kids.length === 0) return;
-    // 首个子节点延续主链（v1→v2）；其余为兄弟分支，与主链子节点同代，命名 v{N}.1/v{N}.2…
-    const trunkChild = bump(label);
-    kids.forEach((kid, idx) => {
-      assign(kid, idx === 0 ? trunkChild : `${trunkChild}.${idx}`);
-    });
-  };
-  roots.forEach((root, i) => assign(root, `v${i + 1}`));
+  for (const v of versions) labels.set(v.id, `v${v.versionNo}`);
   return labels;
 }
 
@@ -163,7 +145,7 @@ export class GenerationService {
     if (!lyrics?.trim()) throw new DomainError("VALIDATION_FAILED", 422, "请先准备歌词");
     const idempotencyKey = input.idempotencyKey || crypto.randomUUID();
 
-    // 从已确认简报读取主题、风格与生成参数（outputType/extraPrompt/quantity）。
+    // 从已确认简报读取主题、风格与生成参数（extraPrompt/quantity）。
     const briefPayload = process.env.DATABASE_URL
       ? await this.loadBriefPayload(input.briefId, input.projectId)
       : readBriefPayload(input.briefId, input.projectId);
@@ -207,7 +189,6 @@ export class GenerationService {
           .filter(Boolean)
           .join("；"),
         priority: briefPayload.priority,
-        outputType: briefPayload.outputType,
       }),
       creativeContext: project.creativeContext,
       hummingAssetId: input.hummingAssetId,
@@ -219,7 +200,9 @@ export class GenerationService {
     // 真实库模式：把 MiniMax 返回的临时 HTTPS 音频转存到私有 COS（仅 COS 可用时）。
     // 失败回退到原 MiniMax URL（记 warn，不中断生成），保证可用性。转存在事务外完成。
     // 与 demos 索引对齐：cosObjectKeys[i] 为转存后的真实 COS key（null 表示未转存，回退临时 URL）。
+    // sourceAudioUrls[i] 保留 MiniMax 原始临时 URL，供 metadata fallback（勿存已签名的 COS URL）。
     const cosObjectKeys: (string | null)[] = demos.map(() => null);
+    const sourceAudioUrls: (string | null)[] = demos.map((demo) => demo.audioUrl);
     if (isRealCosInUse()) {
       await Promise.all(
         demos.map(async (demo, index) => {
@@ -227,8 +210,7 @@ export class GenerationService {
           try {
             const key = await transferAudioToStorage(demo.audioUrl, `generated/${crypto.randomUUID()}.mp3`);
             cosObjectKeys[index] = key;
-            // 用 COS 签名 URL 替换临时 URL：mock 模式（不经 listVersions 解析）也能直接播放真实音频，
-            // 真实库模式则额外存 objectKey 供读取时重新签发。
+            // 用 COS 签名 URL 替换临时 URL，生成响应可直接播放；原始 MiniMax URL 留在 sourceAudioUrls。
             demo.audioUrl = await resolveAudioUrl(key, demo.audioUrl);
           } catch (error) {
             console.warn(`[generation] 音频转存 COS 失败，回退到 MiniMax 临时 URL：`, error);
@@ -250,8 +232,8 @@ export class GenerationService {
 
     const db = getDatabase();
     return db.transaction(async (tx) => {
-      // 简报用别名 melody，生成计划统一为 canonical melody_sketch（重命名记为 P0 todo）。
-      const routeOutputType = briefPayload.outputType === "melody" ? "melody_sketch" : briefPayload.outputType;
+      // 输出类型已从简报移除；生成统一按「歌曲 Demo」路由。
+      const routeOutputType = "song" as const;
       const internalPlan = routeGeneration({ combination: project.combination, outputType: routeOutputType, brief: { theme, genre: briefPayload.genre, tempo: briefPayload.tempo } });
       const [plan] = await tx.insert(generationPlans).values({
         projectId: project.id,
@@ -268,6 +250,7 @@ export class GenerationService {
       const rows = await tx.insert(generationCandidates).values(
         demos.map((demo, index) => {
           const cosKey = cosObjectKeys[index];
+          const sourceUrl = sourceAudioUrls[index];
           // 转存成功 → 用真实 COS key 替换 external:// 占位；否则保留原占位逻辑。
           const objectKey = demo.audioUrl
             ? (cosKey ?? `external://minimax/${job.id}/${index}`)
@@ -278,6 +261,7 @@ export class GenerationService {
             ownerId: owner.id,
             title: candidateLabel(theme, quantity, index),
             objectKey,
+            // 列内存新鲜签名 URL 便于即时播放；metadata.audioUrl 存 MiniMax 原始链作过期后 fallback。
             audioUrl: demo.audioUrl,
             durationMs: demo.durationMs,
             executionKind: demo.executionKind,
@@ -287,13 +271,27 @@ export class GenerationService {
             modelVersion: referenceAudioUrl
               ? (process.env.MINIMAX_MUSIC_COVER_MODEL ?? "music-cover")
               : (process.env.MINIMAX_MUSIC_MODEL ?? "music-2.6"),
-            // cosObjectKey 记录真实 COS key，读取时据此生成签名 URL；audioUrl 保留 MiniMax 临时 URL 作 fallback。
-            metadata: { hasAudio: Boolean(demo.audioUrl), audioUrl: demo.audioUrl, cosObjectKey: cosKey, providerLabel: demo.providerLabel, outputType: routeOutputType, extraPrompt: briefPayload.extraPrompt, quantity, visionUsed: Boolean(visionText) },
+            metadata: {
+              hasAudio: Boolean(demo.audioUrl),
+              audioUrl: sourceUrl,
+              cosObjectKey: cosKey,
+              providerLabel: demo.providerLabel,
+              outputType: routeOutputType,
+              extraPrompt: briefPayload.extraPrompt,
+              quantity,
+              visionUsed: Boolean(visionText),
+            },
           };
         }),
       ).returning();
       await tx.update(projects).set({ status: "review", currentLyrics: lyrics, updatedAt: new Date() }).where(eq(projects.id, project.id));
-      return { jobId: job.id, status: "completed" as const, progress: 100, candidates: rows.map(toCandidateView) };
+      // 返回前按 cosObjectKey 重新签发，避免把即将过期的列内签名 URL 直接交给前端。
+      return {
+        jobId: job.id,
+        status: "completed" as const,
+        progress: 100,
+        candidates: await Promise.all(rows.map((row) => toCandidateViewFresh(row))),
+      };
     });
   }
 
@@ -512,5 +510,26 @@ export class GenerationService {
       }
     });
     return { ok: true };
+  }
+
+  /**
+   * 为候选重新签发可播放 URL（详情栏播放前调用）。
+   * 优先 cosObjectKey / 真实 objectKey → COS 签名；否则回退 metadata/列内 fallback。
+   */
+  async resolveCandidateAudio(owner: AuthUser, candidateId: string): Promise<{ url: string } | null> {
+    if (!process.env.DATABASE_URL) {
+      const entry = mockCandidates.get(candidateId);
+      if (!entry || entry.ownerId !== owner.id) return null;
+      const url = entry.candidate.audioUrl;
+      return url ? { url } : null;
+    }
+    const [row] = await getDatabase()
+      .select()
+      .from(generationCandidates)
+      .where(and(eq(generationCandidates.id, candidateId), eq(generationCandidates.ownerId, owner.id)))
+      .limit(1);
+    if (!row) return null;
+    const fresh = await toCandidateViewFresh(row);
+    return fresh.audioUrl ? { url: fresh.audioUrl } : null;
   }
 }

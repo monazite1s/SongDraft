@@ -38,7 +38,6 @@ export const briefPayloadSchema = z.object({
   evidence: z.array(z.object({ source: z.string().min(1).max(40), detail: z.string().min(1).max(200) })),
   conflicts: z.array(z.string().max(200)),
   priority: z.string().max(300),
-  outputType: z.enum(["song", "soundtrack", "melody"]),
   extraPrompt: z.string().max(1000),
   quantity: z.number().int().min(1).max(10),
 });

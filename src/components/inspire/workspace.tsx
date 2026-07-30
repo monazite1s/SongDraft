@@ -31,7 +31,6 @@ import {
   DEMO_CANDIDATES,
   type CreativeBrief,
   type InputKind,
-  type OutputType,
 } from '@/lib/inspire-data'
 
 type SaveState = 'dirty' | 'saving' | 'saved' | 'error'
@@ -47,7 +46,6 @@ type WorkspaceSessionDraft = {
   coverSet: boolean
   quantity: number
   extraPrompt: string
-  outputType: OutputType
   phase: Phase
   brief: CreativeBrief
   briefId: string | null
@@ -65,7 +63,7 @@ type WorkspaceSessionDraft = {
 }
 
 function bootWorkspace(projectId: string, initialProject?: ProjectDetail): WorkspaceSessionDraft {
-  const cached = loadClientDraft<WorkspaceSessionDraft>(DRAFT_KEYS.workspace(projectId))
+  const fromProject = materialsFromProjectAssets(initialProject?.assets ?? [])
   const defaults: WorkspaceSessionDraft = {
     draft: {
       creativePrompt: initialProject?.description ?? '',
@@ -78,7 +76,6 @@ function bootWorkspace(projectId: string, initialProject?: ProjectDetail): Works
     coverSet: false,
     quantity: loadDefaultQuantity() ?? 3,
     extraPrompt: '',
-    outputType: 'song',
     phase: 'idle',
     brief: DEFAULT_BRIEF,
     briefId: null,
@@ -89,16 +86,38 @@ function bootWorkspace(projectId: string, initialProject?: ProjectDetail): Works
     versionNo: initialProject ? 1 : 0,
     mainId: 'c1',
     selectedCandidateIds: [],
-    hummingAsset: null,
-    referenceImage: null,
+    hummingAsset: fromProject.hummingAsset,
+    referenceImage: fromProject.referenceImage,
   }
+  const cached = loadClientDraft<WorkspaceSessionDraft>(DRAFT_KEYS.workspace(projectId))
   // 合并默认值与旧缓存：旧缓存可能缺新增字段（generatedCandidates 等），用 defaults 补全。
   let merged = cached?.draft ? { ...defaults, ...cached } : defaults
+  // 灵感页 attach 后首次进入：session 里可能仍是空素材，用项目资产回填。
+  if (!merged.hummingAsset && defaults.hummingAsset) merged = { ...merged, hummingAsset: defaults.hummingAsset }
+  if (!merged.referenceImage && defaults.referenceImage) merged = { ...merged, referenceImage: defaults.referenceImage }
   // 有未展示完的生成结果时，强制回到 results，避免 phase 卡在 brief/idle 导致结果区不渲染。
   if (merged.generatedCandidates.length > 0 && merged.phase !== 'results') {
     merged = { ...merged, phase: 'results' }
   }
   return merged
+}
+
+/** 从项目 assets 回填制作台原料区（灵感页上传 → attach → 制作台）。 */
+function materialsFromProjectAssets(assets: ProjectDetail['assets']): {
+  hummingAsset: MaterialAsset | null
+  referenceImage: MaterialAsset | null
+} {
+  const ready = assets.filter((a) => a.status === 'ready' && a.objectKey)
+  const audio = ready.find((a) => a.kind === 'audio')
+  const image = ready.find((a) => a.kind === 'image')
+  return {
+    hummingAsset: audio?.objectKey && audio.previewUrl
+      ? { url: audio.previewUrl, objectKey: audio.objectKey, name: audio.originalName ?? '哼唱音频' }
+      : null,
+    referenceImage: image?.objectKey && image.previewUrl
+      ? { url: image.previewUrl, objectKey: image.objectKey, name: image.originalName ?? '参考图像' }
+      : null,
+  }
 }
 
 export function SongDraftWorkspace({ initialProject }: { initialProject?: ProjectDetail }) {
@@ -114,7 +133,6 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
   const [refinementMessage, setRefinementMessage] = useState('')
   const [refinementError, setRefinementError] = useState('')
   const [generatedCandidates, setGeneratedCandidates] = useState<typeof DEMO_CANDIDATES>(boot.generatedCandidates)
-  const [outputType, setOutputType] = useState<OutputType>(boot.outputType)
   const [selectedInputs, setSelectedInputs] = useState<InputKind[]>(boot.selectedInputs)
   const [coverSet, setCoverSet] = useState(boot.coverSet)
   const [quantity, setQuantity] = useState(boot.quantity)
@@ -184,7 +202,6 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
       coverSet,
       quantity,
       extraPrompt,
-      outputType,
       phase,
       brief,
       briefId,
@@ -198,7 +215,7 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
       hummingAsset,
       referenceImage,
     } satisfies WorkspaceSessionDraft)
-  }, [projectId, draft, originalLyrics, refinedLyrics, selectedInputs, coverSet, quantity, extraPrompt, outputType, phase, brief, briefId, projectTitle, generatedCandidates, savedCandidateIds, savedVersionIdMap, versionNo, mainId, selectedCandidateIds, hummingAsset, referenceImage])
+  }, [projectId, draft, originalLyrics, refinedLyrics, selectedInputs, coverSet, quantity, extraPrompt, phase, brief, briefId, projectTitle, generatedCandidates, savedCandidateIds, savedVersionIdMap, versionNo, mainId, selectedCandidateIds, hummingAsset, referenceImage])
 
   /**
    * 任务6：持久化「上次活跃项目」（lastProjectId），与草稿正交。
@@ -345,7 +362,6 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
       coverSet,
       quantity,
       extraPrompt,
-      outputType,
       phase,
       brief,
       briefId,
@@ -416,7 +432,6 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
       coverSet,
       quantity,
       extraPrompt,
-      outputType,
       phase: 'results',
       brief,
       briefId,
@@ -607,12 +622,12 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
     setSavedVersionIdMap({})
     try {
       const id = await ensureProject()
-      // 生成即确认：先把当前 outputType/额外要求/数量 PATCH 进简报，再据此生成（P0-3）。
+      // 生成即确认：先把当前额外要求/数量 PATCH 进简报，再据此生成（P0-3）。
       if (briefId) {
         await fetch(`/api/projects/${id}/brief/${briefId}`, {
           method: 'PATCH',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ...brief, outputType, extraPrompt, quantity }),
+          body: JSON.stringify({ ...brief, extraPrompt, quantity }),
         })
       }
       setPhase('results')
@@ -665,7 +680,6 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
           projectTitle={projectTitle}
           saveState={saveState}
           onSave={() => void save()}
-          currentVersion={versionNo ? `v${versionNo}` : '新项目'}
           onOpenVersions={() => setVersionsOpen(true)}
           onOpenShare={() => setShareOpen(true)}
           onOpenProjectSelect={() => setProjectSelectOpen(true)}
@@ -717,8 +731,6 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
               busy={busy}
               brief={brief}
               onBriefChange={updateBrief}
-              outputType={outputType}
-              onOutputChange={(next) => { setOutputType(next); markDirty() }}
               extraPrompt={extraPrompt}
               onExtraPromptChange={setExtraPrompt}
               quantity={quantity}

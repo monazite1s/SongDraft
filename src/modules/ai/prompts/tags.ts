@@ -104,7 +104,6 @@ const briefFieldSchemas = {
     .default([]),
   conflicts: z.array(z.string().max(200)).default([]),
   priority: z.string().max(300).default(""),
-  outputType: z.enum(["song", "soundtrack", "melody"]).default("song"),
   extraPrompt: z.string().max(1000).default(""),
   quantity: z.number().int().min(1).max(10).default(3),
 };
@@ -187,13 +186,6 @@ export const BRIEF_TAGS: Record<string, BriefTag> = {
     zod: briefFieldSchemas.priority,
     uiMeta: { label: "优先策略", multiline: true },
   },
-  outputType: {
-    key: "outputType",
-    field: "outputType",
-    promptHint: 'outputType：输出类型，枚举 "song" | "soundtrack" | "melody"（默认 song）',
-    zod: briefFieldSchemas.outputType,
-    uiMeta: { label: "输出类型", chips: ["song", "soundtrack", "melody"] },
-  },
   extraPrompt: {
     key: "extraPrompt",
     field: "extraPrompt",
@@ -223,7 +215,6 @@ export const BRIEF_TAG_ORDER: string[] = [
   "evidence",
   "conflicts",
   "priority",
-  "outputType",
   "extraPrompt",
   "quantity",
 ];
@@ -245,7 +236,6 @@ export const briefZodSchema = z.object({
   evidence: briefFieldSchemas.evidence,
   conflicts: briefFieldSchemas.conflicts,
   priority: briefFieldSchemas.priority,
-  outputType: briefFieldSchemas.outputType,
   extraPrompt: briefFieldSchemas.extraPrompt,
   quantity: briefFieldSchemas.quantity,
 });

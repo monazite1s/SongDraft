@@ -24,7 +24,9 @@ export function isRealCosInUse(): boolean {
 export async function transferAudioToStorage(sourceUrl: string, objectKey: string): Promise<string> {
   const response = await fetch(sourceUrl, { signal: AbortSignal.timeout(60_000) });
   if (!response.ok) throw new Error(`transfer: 拉取源音频失败 (${response.status})`);
-  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() || "audio/mpeg";
+  // MiniMax/CDN 常返回 application/octet-stream；浏览器 <audio> 依赖 audio/* MIME，强制落为 audio/mpeg。
+  const rawType = response.headers.get("content-type")?.split(";")[0]?.trim() || "";
+  const contentType = rawType.startsWith("audio/") ? rawType : "audio/mpeg";
   const buffer = Buffer.from(await response.arrayBuffer());
   await getObjectStorage().putObject(objectKey, buffer, contentType);
   return objectKey;

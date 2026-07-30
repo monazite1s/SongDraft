@@ -1,10 +1,15 @@
-import { expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
+import { MOCK_BRIEF_PAYLOAD, mockDeepSeekFetch, setDeepSeekKeyForTest } from "@/modules/ai/__fixtures__/deepseek-mock";
 import { MockProjectRepository } from "@/modules/projects/project-repository";
 import { ProjectService } from "@/modules/projects/project-service";
 import { BriefService } from "./brief-service";
 
 const owner = { id: "00000000-0000-4000-8000-000000000015", email: "brief@example.test", displayName: "简报测试" };
+
+// 文本生成已改为强制走 DeepSeek：测试用 mock fetch 喂回合法简报 JSON。
+beforeEach(() => { setDeepSeekKeyForTest(); mockDeepSeekFetch({ brief: MOCK_BRIEF_PAYLOAD }); });
+afterEach(() => vi.restoreAllMocks());
 
 test("generates a brief from project materials, then supports edit and confirm", async () => {
   const original = process.env.DATABASE_URL;

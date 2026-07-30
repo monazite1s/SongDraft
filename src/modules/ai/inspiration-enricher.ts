@@ -1,8 +1,8 @@
 /**
  * 灵感补全适配器（问题 4：灵感 AI 补全）。
  *
- * InspirationEnricher 统一契约；真实模式走 DeepSeek chat/completions + JSON Output，
- * 无 Key 或 TEXT_PROVIDER_MODE=mock 时使用确定性 Mock，不冒充外部结果（与 brief-generator 同模式）。
+ * InspirationEnricher 统一契约；走 DeepSeek chat/completions + JSON Output。
+ * 未配置 Key 时抛 PROVIDER_NOT_CONFIGURED，不返回写死数据。
  *
  * 输入灵感 snapshot（用户已填字段），仅补全空缺的结构化字段：
  * moods / speedFeel / soundHints / referenceWorks / title，不覆盖用户已填。
@@ -77,72 +77,6 @@ function dropUserFilled(snapshot: InspirationSnapshot, raw: InspirationEnrichmen
   return result;
 }
 
-/** 从已有输入确定性推断补全（无外部调用）。 */
-function mockEnrich(snapshot: InspirationSnapshot): InspirationEnrichment {
-  const input = extractFilledInput(snapshot);
-  const text = typeof input.text === "string" ? input.text : "";
-  const note = typeof input.audioNote === "string" ? input.audioNote : typeof input.imageNote === "string" ? input.imageNote : "";
-  const seed = (text || note || input.title || "").toString();
-
-  const title = !snapshot.title.trim() && seed.trim() ? seed.slice(0, 18) : null;
-
-  const moods = snapshot.tags.length === 0 && !(snapshot.text?.moods.length)
-    ? deriveMoods(seed)
-    : null;
-
-  const speedFeel = snapshot.text?.speedFeel === "unknown" || (snapshot.primaryKind !== "text")
-    ? deriveSpeedFeel(seed)
-    : null;
-
-  const soundHints = !(snapshot.text?.soundHints.trim())
-    ? deriveSoundHints(seed)
-    : null;
-
-  const referenceWorks = !(snapshot.text?.referenceWorks.trim())
-    ? deriveReferenceWorks(seed)
-    : null;
-
-  return { title, moods, speedFeel, soundHints, referenceWorks };
-}
-
-function deriveMoods(seed: string): string[] {
-  const s = seed.toLowerCase();
-  if (/(夜|moon|雨|rain|怀|旧|nostalg)/.test(s)) return ["怀旧", "克制", "迷离"];
-  if (/(热|烈|summer|光|亮|dance|舞)/.test(s)) return ["明亮", "热烈", "治愈"];
-  if (/(暖|warm|爱|love|家|home)/.test(s)) return ["治愈", "温暖", "明亮"];
-  return ["治愈", "克制", "明亮"];
-}
-
-function deriveSpeedFeel(seed: string): EnrichSpeedFeel {
-  const s = seed.toLowerCase();
-  if (/(慢|slow|夜|sleep|静|calm)/.test(s)) return "slow";
-  if (/(快|fast|舞|dance|热|烈|run|跑)/.test(s)) return "fast";
-  if (seed.trim()) return "medium";
-  return "unknown";
-}
-
-function deriveSoundHints(seed: string): string {
-  if (!seed.trim()) return "";
-  const s = seed.toLowerCase();
-  if (/(夜|moon|梦|dream)/.test(s)) return "合成 Pad、轻拨吉他、低频贝斯";
-  if (/(舞|dance|热|烈|summer)/.test(s)) return "电子鼓机、明亮合成器、律动贝斯";
-  return "电钢琴、轻拨弦、温暖合成 Pad";
-}
-
-function deriveReferenceWorks(seed: string): string {
-  if (!seed.trim()) return "";
-  const s = seed.toLowerCase();
-  if (/(梦|dream|夜|moon)/.test(s)) return "Dream Pop 风格，参考 Beach House / Cigarettes After Sex";
-  if (/(舞|dance|电子|electronic)/.test(s)) return "Synth Pop 风格，参考 The Weeknd / CHVRCHES";
-  return "Indie Pop 风格，参考 Clairo / Beabadoobee";
-}
-
-export class MockInspirationEnricher implements InspirationEnricher {
-  async enrich(snapshot: InspirationSnapshot): Promise<InspirationEnricherResult> {
-    return { ...dropUserFilled(snapshot, mockEnrich(snapshot)), mode: "simulated" };
-  }
-}
-
 /** DeepSeek：灵感已填字段 → 补全空缺字段 JSON（Zod 校验）。真实失败不冒充成功。 */
 export class DeepSeekInspirationEnricher implements InspirationEnricher {
   constructor(
@@ -191,9 +125,7 @@ export class DeepSeekInspirationEnricher implements InspirationEnricher {
   }
 }
 
-/** 按环境变量选择 DeepSeek 或透明 Mock（失败不回退伪装）。 */
+/** 文本生成一律走 DeepSeek（未配置 Key 时适配器抛 PROVIDER_NOT_CONFIGURED，不返回写死数据）。 */
 export function getInspirationEnricher(): InspirationEnricher {
-  return process.env.NODE_ENV !== "test" && process.env.DEEPSEEK_API_KEY && process.env.TEXT_PROVIDER_MODE !== "mock"
-    ? new DeepSeekInspirationEnricher()
-    : new MockInspirationEnricher();
+  return new DeepSeekInspirationEnricher();
 }

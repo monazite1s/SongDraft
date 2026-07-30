@@ -38,8 +38,8 @@ export interface DemoVersionView {
   /** 父版本 id（版本树父子关系）；null 表示根节点。 */
   parentId?: string | null;
   /**
-   * 版本树展示标签（git 式）：主链 v1→v2→v3，从某节点分叉的分支为 vN.M。
-   * 由 parentId 拓扑计算，与扁平 versionNo 解耦。前端优先用 label 展示。
+   * 版本树展示标签：与歌曲真实 versionNo 一致（v1、v2、v3…）。
+   * 父子分叉由 parentId 布局表达，不再用 vN.M 拓扑重编号。
    */
   label?: string;
 }

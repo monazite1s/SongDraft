@@ -1,5 +1,6 @@
-import { expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
+import { MOCK_BRIEF_PAYLOAD, mockDeepSeekFetch, setDeepSeekKeyForTest } from "@/modules/ai/__fixtures__/deepseek-mock";
 import { GenerationService } from "@/modules/generation/generation-service";
 import { BriefService } from "@/modules/projects/brief-service";
 import { MockProjectRepository } from "@/modules/projects/project-repository";
@@ -7,6 +8,10 @@ import { ProjectService } from "@/modules/projects/project-service";
 import { ShareService } from "./share-service";
 
 const owner = { id: "00000000-0000-4000-8000-000000000077", email: "share@example.test", displayName: "分享测试" };
+
+// 简报生成强制走 DeepSeek：测试用 mock fetch 喂回合法简报 JSON。
+beforeEach(() => { setDeepSeekKeyForTest(); mockDeepSeekFetch({ brief: MOCK_BRIEF_PAYLOAD }); });
+afterEach(() => vi.restoreAllMocks());
 
 test("creates a private mock link and accepts a guest comment", async () => {
   const original = process.env.DATABASE_URL;

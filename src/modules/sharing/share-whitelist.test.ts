@@ -2,8 +2,9 @@
  * 分享白名单授权测试（docs/SPEC.md §7 分享权限）。
  * 覆盖：未登录 401、owner 放行、首次有效访问授权、撤销后 403、owner 列/撤销 grant。
  */
-import { afterEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
+import { MOCK_BRIEF_PAYLOAD, mockDeepSeekFetch, setDeepSeekKeyForTest } from "@/modules/ai/__fixtures__/deepseek-mock";
 import { GenerationService } from "@/modules/generation/generation-service";
 import { BriefService } from "@/modules/projects/brief-service";
 import { MockProjectRepository } from "@/modules/projects/project-repository";
@@ -15,8 +16,12 @@ const owner: AuthUser = { id: "00000000-0000-4000-8000-000000000077", email: "ow
 const visitor: AuthUser = { id: "00000000-0000-4000-8000-000000000088", email: "visitor@example.test", displayName: "访问者甲" };
 const visitor2: AuthUser = { id: "00000000-0000-4000-8000-000000000099", email: "visitor2@example.test", displayName: "访问者乙" };
 
-/** 清空 mock grant store，避免用例间相互污染。 */
+// 简报生成强制走 DeepSeek：测试用 mock fetch 喂回合法简报 JSON。
+beforeEach(() => { setDeepSeekKeyForTest(); mockDeepSeekFetch({ brief: MOCK_BRIEF_PAYLOAD }); });
+
+/** 清空 mock grant store + 还原 fetch mock，避免用例间相互污染。 */
 afterEach(() => {
+  vi.restoreAllMocks();
   const store = globalThis as typeof globalThis & { __songDraftShareGrants?: Map<string, unknown> };
   store.__songDraftShareGrants?.clear();
 });

@@ -104,3 +104,28 @@ export class MockUploadRepository implements UploadRepository {
 }
 
 export function getUploadRepository(): UploadRepository { return process.env.DATABASE_URL ? new DrizzleUploadRepository() : new MockUploadRepository(); }
+
+/** Mock：列出某灵感记录下的上传（供 attach 时挂到项目）。 */
+export function listMockUploadsForRecord(recordId: string, ownerId: string): MockUpload[] {
+  return [...mockUploads.values()].filter((u) => u.recordId === recordId && u.ownerId === ownerId);
+}
+
+/** Mock：把 record 作用域的 ready 上传挂到项目 assets（灵感 attach → 制作台回填）。 */
+export function linkMockRecordUploadsToProject(recordId: string, projectId: string, ownerId: string) {
+  for (const upload of listMockUploadsForRecord(recordId, ownerId)) {
+    if (upload.status !== "ready") continue;
+    upload.projectId = projectId;
+    attachMockAsset({
+      projectId,
+      id: upload.id,
+      kind: upload.kind,
+      content: null,
+      included: true,
+      status: "ready",
+      originalName: upload.originalName,
+      mimeType: upload.mimeType,
+      sizeBytes: upload.sizeBytes,
+      objectKey: upload.objectKey,
+    });
+  }
+}

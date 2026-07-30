@@ -59,9 +59,10 @@ export function verifySessionToken(token: string): { uid: string } | null {
 export async function readSessionUid(): Promise<string | null> {
   const store = await cookies();
   const token = store.get(COOKIE_NAME)?.value;
-  if (!token) return null;
+  if (!token) { console.warn("[auth] readSessionUid: 无 sd_session cookie"); return null; }
   const verified = verifySessionToken(token);
-  return verified?.uid ?? null;
+  if (!verified) { console.warn("[auth] readSessionUid: sd_session token 校验失败/过期（可能 AUTH_SESSION_SECRET 不一致或已轮换）"); return null; }
+  return verified.uid;
 }
 
 export async function setSessionCookie(uid: string): Promise<void> {

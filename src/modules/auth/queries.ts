@@ -28,7 +28,7 @@ export const getCurrentUser = cache(async (): Promise<AuthUser | null> => {
   if (!uid) return null;
 
   const [row] = await getDatabase().select({ id: profiles.id, email: profiles.email, displayName: profiles.displayName }).from(profiles).where(eq(profiles.id, uid)).limit(1);
-  if (!row) return null;
+  if (!row) { console.warn("[auth] getCurrentUser: profiles 未找到 uid=", uid); return null; }
   return { id: row.id, email: row.email, displayName: row.displayName };
 });
 

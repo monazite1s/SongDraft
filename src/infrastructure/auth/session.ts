@@ -5,13 +5,53 @@
  */
 import "server-only";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 const COOKIE_NAME = "sd_session";
 const MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 
 let ephemeralSecret = "";
+
+export type CookieSecureInput = {
+  override?: string | undefined;
+  forwardedProto?: string | null | undefined;
+  appUrl?: string | undefined;
+  nodeEnv?: string | undefined;
+};
+
+/**
+ * 是否给 session cookie 加 Secure。
+ * Secure cookie 在纯 HTTP 下会被浏览器丢弃 → 登录 303 后后续接口全未认证。
+ *
+ * 优先级：COOKIE_SECURE 显式覆盖 → X-Forwarded-Proto → NEXT_PUBLIC_APP_URL scheme → production 默认 true。
+ * 腾讯云 HTTP + Nginx（已设 X-Forwarded-Proto $scheme）会自动得到 false。
+ */
+export function resolveCookieSecure(input: CookieSecureInput = {}): boolean {
+  const override = input.override?.trim().toLowerCase();
+  if (override === "true") return true;
+  if (override === "false") return false;
+
+  const proto = input.forwardedProto?.split(",")[0]?.trim().toLowerCase();
+  if (proto === "https") return true;
+  if (proto === "http") return false;
+
+  const appUrl = input.appUrl?.trim() ?? "";
+  if (appUrl.startsWith("https://")) return true;
+  if (appUrl.startsWith("http://")) return false;
+
+  return (input.nodeEnv ?? process.env.NODE_ENV) === "production";
+}
+
+async function cookieSecure(): Promise<boolean> {
+  const h = await headers();
+  return resolveCookieSecure({
+    override: process.env.COOKIE_SECURE,
+    forwardedProto: h.get("x-forwarded-proto"),
+    appUrl: process.env.NEXT_PUBLIC_APP_URL,
+    nodeEnv: process.env.NODE_ENV,
+  });
+}
 
 function getSecret(): string {
   const env = process.env.AUTH_SESSION_SECRET;
@@ -69,7 +109,7 @@ export async function setSessionCookie(uid: string): Promise<void> {
   const store = await cookies();
   store.set(COOKIE_NAME, createSessionToken(uid), {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: await cookieSecure(),
     sameSite: "lax",
     path: "/",
     maxAge: MAX_AGE_SECONDS,
@@ -78,5 +118,5 @@ export async function setSessionCookie(uid: string): Promise<void> {
 
 export async function clearSessionCookie(): Promise<void> {
   const store = await cookies();
-  store.set(COOKIE_NAME, "", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 0 });
+  store.set(COOKIE_NAME, "", { httpOnly: true, secure: await cookieSecure(), sameSite: "lax", path: "/", maxAge: 0 });
 }

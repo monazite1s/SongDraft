@@ -1,9 +1,12 @@
 import { beforeEach, expect, expectTypeOf, test, vi } from "vitest";
 
-// session.ts 顶部 import next/headers 的 cookies；这里桩一个空实现，token 纯函数测试用不到。
-vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined, set: () => {} }) }));
+// session.ts 顶部 import next/headers；token 纯函数测试用不到真实实现。
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ get: () => undefined, set: () => {} }),
+  headers: async () => ({ get: () => null }),
+}));
 
-import { createSessionToken, verifySessionToken } from "./session";
+import { createSessionToken, resolveCookieSecure, verifySessionToken } from "./session";
 
 beforeEach(() => {
   process.env.AUTH_SESSION_SECRET = "test-secret-key-very-long";
@@ -34,4 +37,20 @@ test("格式错误的 token 返回 null", () => {
 
 test("verifySessionToken 返回类型为 {uid} | null", () => {
   expectTypeOf(verifySessionToken("x")).toMatchTypeOf<{ uid: string } | null>();
+});
+
+test("resolveCookieSecure：COOKIE_SECURE 覆盖优先", () => {
+  expect(resolveCookieSecure({ override: "false", forwardedProto: "https", nodeEnv: "production" })).toBe(false);
+  expect(resolveCookieSecure({ override: "true", forwardedProto: "http", nodeEnv: "development" })).toBe(true);
+});
+
+test("resolveCookieSecure：跟随 X-Forwarded-Proto（Nginx HTTP 反代）", () => {
+  expect(resolveCookieSecure({ forwardedProto: "http", nodeEnv: "production" })).toBe(false);
+  expect(resolveCookieSecure({ forwardedProto: "https", nodeEnv: "production" })).toBe(true);
+  expect(resolveCookieSecure({ forwardedProto: "https, http", nodeEnv: "production" })).toBe(true);
+});
+
+test("resolveCookieSecure：跟随 NEXT_PUBLIC_APP_URL", () => {
+  expect(resolveCookieSecure({ appUrl: "http://1.2.3.4", nodeEnv: "production" })).toBe(false);
+  expect(resolveCookieSecure({ appUrl: "https://app.example", nodeEnv: "development" })).toBe(true);
 });

@@ -15,7 +15,13 @@ import type { NextConfig } from "next";
  *   故 media-src 含 blob: https:。未放开 frame-ancestors（即默认仅同源可嵌套）。
  *
  * 注意：CSP 未对 image/font 做严苛限制以兼容 data: 占位图与内联字体。
+ * HSTS 仅在明确 HTTPS（COOKIE_SECURE=true 或 APP_URL 为 https）时下发，
+ * 避免腾讯云纯 HTTP 公网 IP 部署被浏览器强制升级到 https。
  */
+const enableHsts =
+  process.env.COOKIE_SECURE?.trim().toLowerCase() === "true" ||
+  (process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "").startsWith("https://");
+
 const securityHeaders = [
   { key: "X-Frame-Options", value: "SAMEORIGIN" },
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -24,10 +30,9 @@ const securityHeaders = [
     key: "Permissions-Policy",
     value: "camera=(self), microphone=(self), geolocation=()",
   },
-  {
-    key: "Strict-Transport-Security",
-    value: "max-age=31536000; includeSubDomains",
-  },
+  ...(enableHsts
+    ? [{ key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" }]
+    : []),
   {
     key: "Content-Security-Policy",
     value: [
@@ -51,10 +56,22 @@ const securityHeaders = [
   },
 ];
 
+/** 反代 / CDN 域名，逗号分隔，写入 SERVER_ACTION_ORIGINS（仅 host，不含协议）。 */
+const serverActionOrigins = (process.env.SERVER_ACTION_ORIGINS ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   // 自托管（腾讯云等）：产出 .next/standalone，可直接 `node server.js` 运行，无需在服务器装全部依赖。
   output: "standalone",
+  experimental: {
+    // Origin ≠ Host 时（多层反代）放行；公网 IP 直连且 Host 转发正确时可不配。
+    ...(serverActionOrigins.length > 0
+      ? { serverActions: { allowedOrigins: serverActionOrigins } }
+      : {}),
+  },
   async headers() {
     return [
       {

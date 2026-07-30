@@ -40,9 +40,9 @@ const generateSchema = z.object({
   lyrics: z.string().trim().min(1).max(10_000).optional(),
   hummingAssetId: z.string().uuid().nullable().optional(),
   /** 哼唱/参考音频的 COS objectKey；存在时走 music-cover 双通道生成。 */
-  hummingObjectKey: z.string().min(1).max(512).optional(),
+  hummingObjectKey: z.string().min(1).max(512).nullable().optional(),
   /** 参考图像的 COS objectKey；存在时走 GLM-4V 图生文，注入音乐 prompt 视觉意象。 */
-  imageObjectKey: z.string().min(1).max(512).optional(),
+  imageObjectKey: z.string().min(1).max(512).nullable().optional(),
   idempotencyKey: z.string().min(8).max(120).optional(),
 });
 

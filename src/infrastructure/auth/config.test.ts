@@ -1,16 +1,16 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { getAuthConfigurationError, isMockAuthEnabled } from "./config";
+import { getAuthConfigurationError, isMockAuthEnabled, isSelfAuthConfigured } from "./config";
 
 function clearAuthEnvironment() {
   vi.stubEnv("AUTH_MODE", "");
-  vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
-  vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "");
+  vi.stubEnv("DATABASE_URL", "");
+  vi.stubEnv("AUTH_SESSION_SECRET", "");
 }
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe("auth configuration", () => {
+describe("auth configuration (self-rolled)", () => {
   test("uses mock auth for a zero-config development checkout", () => {
     clearAuthEnvironment();
     vi.stubEnv("NODE_ENV", "development");
@@ -19,13 +19,23 @@ describe("auth configuration", () => {
     expect(getAuthConfigurationError()).toBeNull();
   });
 
-  test("respects an explicit Supabase mode and reports missing credentials", () => {
+  test("respects an explicit non-mock mode and reports missing DATABASE_URL", () => {
     clearAuthEnvironment();
     vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("AUTH_MODE", "supabase");
+    vi.stubEnv("AUTH_MODE", "self");
 
     expect(isMockAuthEnabled()).toBe(false);
-    expect(getAuthConfigurationError()).toContain("Supabase");
+    expect(getAuthConfigurationError()).toContain("DATABASE_URL");
+  });
+
+  test("reports missing AUTH_SESSION_SECRET when DATABASE_URL is set", () => {
+    clearAuthEnvironment();
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("AUTH_MODE", "self");
+    vi.stubEnv("DATABASE_URL", "postgres://example/db");
+
+    expect(isSelfAuthConfigured()).toBe(false);
+    expect(getAuthConfigurationError()).toContain("AUTH_SESSION_SECRET");
   });
 
   test("never enables mock auth in production", () => {
@@ -37,13 +47,14 @@ describe("auth configuration", () => {
     expect(getAuthConfigurationError()).toContain("认证服务尚未配置");
   });
 
-  test("uses configured Supabase by default", () => {
+  test("is configured when both DATABASE_URL and AUTH_SESSION_SECRET are set", () => {
     clearAuthEnvironment();
     vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
-    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "public-anon-key");
+    vi.stubEnv("AUTH_MODE", "self");
+    vi.stubEnv("DATABASE_URL", "postgres://example/db");
+    vi.stubEnv("AUTH_SESSION_SECRET", "some-very-secret-key");
 
-    expect(isMockAuthEnabled()).toBe(false);
+    expect(isSelfAuthConfigured()).toBe(true);
     expect(getAuthConfigurationError()).toBeNull();
   });
 });

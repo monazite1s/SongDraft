@@ -38,6 +38,8 @@ export const profiles = pgTable("profiles", {
   email: text("email").notNull(),
   displayName: text("display_name").notNull(),
   avatarObjectKey: text("avatar_object_key"),
+  /** 自写 Auth：scrypt 口令哈希（salt$hash）。可空兼容无口令历史行。 */
+  passwordHash: text("password_hash"),
   ...timestamps,
 });
 

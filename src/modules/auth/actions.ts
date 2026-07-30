@@ -1,17 +1,19 @@
 /**
- * 登录 / 注册 / 登出 Server Actions。
- * AUTH_MODE=mock 时登录直接进入首页；生产不得启用 Mock Auth。
+ * 登录 / 注册 / 登出 Server Actions（自写 Auth，脱离 Supabase）。
+ * email + 密码，不验证邮箱；密码 scrypt 哈希，session 为 HMAC 签名 cookie。
+ * AUTH_MODE=mock / 本地无 DB 时直接进入首页；生产不得启用 Mock Auth。
  */
 "use server";
 
+import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
-import { createAuthServerClient } from "@/infrastructure/auth/server";
-import {
-  getAuthConfigurationError,
-  isMockAuthEnabled,
-} from "@/infrastructure/auth/config";
+import { getDatabase } from "@/infrastructure/db/client";
+import { profiles } from "@/infrastructure/db/schema";
+import { getAuthConfigurationError, isMockAuthEnabled } from "@/infrastructure/auth/config";
+import { hashPassword, verifyPassword } from "@/infrastructure/auth/password";
+import { clearSessionCookie, setSessionCookie } from "@/infrastructure/auth/session";
 
 const credentialsSchema = z.object({
   email: z.string().email("请输入有效邮箱"),
@@ -32,12 +34,15 @@ function ensureAuthConfigured(path: "/login" | "/register") {
   if (error) redirectWithError(path, error);
 }
 
-/**
- * 安全跳回路径校验：只允许以 "/" 开头且不含 "//" 的相对路径，防开放重定向。
- */
+/** 安全跳回路径校验：只允许以 "/" 开头且不含 "//" 的相对路径，防开放重定向。 */
 function safeRedirectTarget(raw: string | undefined): string {
   if (!raw || !raw.startsWith("/") || raw.includes("//")) return "/";
   return raw;
+}
+
+async function findProfileByEmail(email: string) {
+  const [row] = await getDatabase().select({ id: profiles.id, email: profiles.email, displayName: profiles.displayName, passwordHash: profiles.passwordHash }).from(profiles).where(eq(profiles.email, email)).limit(1);
+  return row ?? null;
 }
 
 export async function loginAction(formData: FormData) {
@@ -49,9 +54,12 @@ export async function loginAction(formData: FormData) {
   if (!parsed.success) redirectWithError("/login", parsed.error.issues[0]?.message ?? "登录信息无效");
   const redirectTo = safeRedirectTarget(parsed.data.redirect);
 
-  const supabase = await createAuthServerClient();
-  const { error } = await supabase.auth.signInWithPassword({ email: parsed.data.email, password: parsed.data.password });
-  if (error) redirect(`/login?error=${encodeURIComponent("邮箱或密码不正确")}`);
+  const profile = await findProfileByEmail(parsed.data.email);
+  // 邮箱不存在 / 未设密码 / 密码错：统一模糊提示，避免探测邮箱是否注册。
+  if (!profile?.passwordHash || !(await verifyPassword(parsed.data.password, profile.passwordHash))) {
+    redirectWithError("/login", "邮箱或密码不正确");
+  }
+  await setSessionCookie(profile.id);
   redirect(redirectTo);
 }
 
@@ -61,29 +69,25 @@ export async function registerAction(formData: FormData) {
   const parsed = registrationSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) redirectWithError("/register", parsed.error.issues[0]?.message ?? "注册信息无效");
 
-  const { displayName, email, password, redirect: _redirect } = parsed.data;
-  const supabase = await createAuthServerClient();
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: { data: { display_name: displayName } },
-  });
-  if (error) {
-    // 透出 Supabase 真实错误（status/code/message），便于定位：captcha、限流、已注册等。
-    console.error("[auth] signUp 失败 status=", error.status, "code=", error.code, "msg=", error.message);
-    redirect(`/register?error=${encodeURIComponent(`注册失败：${error.message}`)}`);
+  const { displayName, email, password } = parsed.data;
+  const existing = await findProfileByEmail(email);
+  if (existing) redirectWithError("/register", "该邮箱已注册，请直接登录");
+
+  const id = crypto.randomUUID();
+  const passwordHash = await hashPassword(password);
+  try {
+    await getDatabase().insert(profiles).values({ id, email, displayName, passwordHash });
+  } catch (error) {
+    console.error("[auth] 注册写库失败：", error);
+    redirectWithError("/register", "注册失败，请稍后重试");
   }
-  // signUp 成功但无 session：通常是 Supabase 开启了「邮箱确认」。此时用户尚未确认，无法直接登录。
-  if (!data.session) {
-    redirect(`/register?error=${encodeURIComponent("已创建账号，但 Supabase 开启了邮箱确认——需到邮箱点确认链接后才能登录；或在 Supabase 关闭 Confirm email。")}`);
-  }
+  await setSessionCookie(id);
   redirect("/");
 }
 
 export async function logoutAction() {
   if (isMockAuthEnabled()) redirect("/login");
   ensureAuthConfigured("/login");
-  const supabase = await createAuthServerClient();
-  await supabase.auth.signOut();
+  await clearSessionCookie();
   redirect("/login");
 }

@@ -1,12 +1,15 @@
 /**
- * 当前用户查询（docs/technical-design.md §6）
- * AUTH_MODE=mock 时返回固定 Demo 用户；生产禁用 Mock Auth，改走 Supabase。
- * Route Handler / Server Component 统一经此取会话，浏览器不接触 Provider Key。
+ * 当前用户查询（自写 Auth，脱离 Supabase）。
+ * Route Handler / Server Component 统一经此取会话：读签名 cookie → 查 profiles。
+ * AUTH_MODE=mock 或本地无 DB 时返回固定 Demo 用户；生产禁用 Mock。
  */
+import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 
-import { isMockAuthEnabled, isSupabaseConfigured } from "@/infrastructure/auth/config";
-import { createAuthServerClient } from "@/infrastructure/auth/server";
+import { getDatabase } from "@/infrastructure/db/client";
+import { profiles } from "@/infrastructure/db/schema";
+import { isMockAuthEnabled } from "@/infrastructure/auth/config";
+import { readSessionUid } from "@/infrastructure/auth/session";
 import type { AuthUser } from "./types";
 
 const mockUser: AuthUser = {
@@ -15,20 +18,16 @@ const mockUser: AuthUser = {
   displayName: "Demo 创作者",
 };
 
-/** 当前登录用户；Mock 模式返回固定 Demo 用户。 */
+/** 当前登录用户：读 session cookie → 查 profiles；Mock 模式返回固定 Demo 用户。 */
 export async function getCurrentUser(): Promise<AuthUser | null> {
   if (isMockAuthEnabled()) return mockUser;
-  if (!isSupabaseConfigured()) return null;
 
-  const supabase = await createAuthServerClient();
-  const { data, error } = await supabase.auth.getUser();
-  if (error || !data.user?.email) return null;
+  const uid = await readSessionUid();
+  if (!uid) return null;
 
-  return {
-    id: data.user.id,
-    email: data.user.email,
-    displayName: String(data.user.user_metadata.display_name || data.user.email.split("@")[0]),
-  };
+  const [row] = await getDatabase().select({ id: profiles.id, email: profiles.email, displayName: profiles.displayName }).from(profiles).where(eq(profiles.id, uid)).limit(1);
+  if (!row) return null;
+  return { id: row.id, email: row.email, displayName: row.displayName };
 }
 
 export async function requireCurrentUser() {

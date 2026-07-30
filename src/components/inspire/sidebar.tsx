@@ -73,33 +73,35 @@ export function Sidebar() {
     setCreateHref(last ? `/create/${last.id}` : '/create')
   }, [pathname])
 
-  // 最近歌曲 + 当前用户均为独立请求（非派生 state），loading 态在 effect 内 setState 合规。
-  // 依赖 pathname：切路由时静默后台刷新（Sidebar 组件本身不重挂载，无闪烁；仅数据更新）。
-  // 解决登入竞态（mount 早于 session 就绪 → 永远「未登录」）与生成歌曲后「最近歌曲」不刷新。
+  // 最近歌曲 + 当前用户：挂载时拉一次（不再每次跳转都拉，避免 N 次串行查询拖慢导航）。
+  // 保存版本后会派发 sd:songs-changed 事件 → 仅在那一刻刷新最近歌曲。
   useEffect(() => {
-    fetch('/api/works/recent-songs?limit=5')
-      .then(async (r) => {
-        const body = (await r.json()) as RecentSongsEnvelope
-        if (r.ok && body.ok && Array.isArray(body.data)) {
-          setSongs(body.data)
-        }
-      })
-      .catch(() => {
-        /* fetch 失败走空状态，不抛错 */
-      })
-      .finally(() => setLoaded(true))
-
-    fetch('/api/profile')
-      .then(async (r) => {
-        const body = (await r.json()) as ProfileEnvelope
-        if (r.ok && body.ok && body.data) {
-          setProfile(body.data)
-        }
-      })
-      .catch(() => {
-        /* 取数失败保持 null，用户区显示未登录态 */
-      })
-  }, [pathname])
+    let cancelled = false
+    const loadSongs = () => {
+      fetch('/api/works/recent-songs?limit=5')
+        .then(async (r) => {
+          const body = (await r.json()) as RecentSongsEnvelope
+          if (!cancelled && r.ok && body.ok && Array.isArray(body.data)) setSongs(body.data)
+        })
+        .catch(() => { /* fetch 失败走空状态，不抛错 */ })
+        .finally(() => { if (!cancelled) setLoaded(true) })
+    }
+    const loadProfile = () => {
+      fetch('/api/profile')
+        .then(async (r) => {
+          const body = (await r.json()) as ProfileEnvelope
+          if (!cancelled && r.ok && body.ok && body.data) setProfile(body.data)
+        })
+        .catch(() => { /* 取数失败保持 null，用户区显示未登录态 */ })
+    }
+    loadSongs()
+    loadProfile()
+    window.addEventListener('sd:songs-changed', loadSongs)
+    return () => {
+      cancelled = true
+      window.removeEventListener('sd:songs-changed', loadSongs)
+    }
+  }, [])
 
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">

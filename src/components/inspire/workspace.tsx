@@ -667,6 +667,8 @@ export function SongDraftWorkspace({ initialProject }: { initialProject?: Projec
       setSavedVersionIdMap((prev) => ({ ...prev, ...mapping }))
       setVersionNo((current) => current + body.data!.saved.length)
       setSaveState('saved')
+      // 通知侧栏刷新「最近歌曲」（不再每次跳转都拉，只在保存版本后刷新）。
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('sd:songs-changed'))
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : '保存版本失败')
     }

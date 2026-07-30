@@ -395,22 +395,41 @@ export class GenerationService {
    */
   async listRecentSongs(owner: AuthUser, limit = 5): Promise<RecentSongItem[]> {
     const safeLimit = Number.isFinite(limit) ? Math.min(20, Math.max(1, Math.floor(limit))) : 5;
-    const recentProjects = await getProjectRepository().listPage(owner.id, 1, Math.max(safeLimit * 2, safeLimit));
-    const songs: RecentSongItem[] = [];
-    for (const project of recentProjects.items) {
-      if (songs.length >= safeLimit) break;
-      const versions = await this.listVersions(owner, project.id);
-      const represent = versions.find((v) => v.isMain) ?? versions[0];
-      if (!represent) continue;
-      songs.push({
-        versionId: represent.id,
-        projectId: project.id,
-        title: represent.title,
-        projectName: project.title,
-        updatedAt: represent.createdAt,
-      });
+    if (!process.env.DATABASE_URL) {
+      // Mock：内存数据，保留按项目取代表版本的轻量逻辑。
+      const recentProjects = await getProjectRepository().listPage(owner.id, 1, Math.max(safeLimit * 2, safeLimit));
+      const songs: RecentSongItem[] = [];
+      for (const project of recentProjects.items) {
+        if (songs.length >= safeLimit) break;
+        const versions = await this.listVersions(owner, project.id);
+        const represent = versions.find((v) => v.isMain) ?? versions[0];
+        if (!represent) continue;
+        songs.push({ versionId: represent.id, projectId: project.id, title: represent.title, projectName: project.title, updatedAt: represent.createdAt });
+      }
+      return songs;
     }
-    return songs;
+    // 真实库：一条查询取每个项目主版本（isMain），不解析 COS 音频 URL（最近歌曲只需标题/时间）。
+    const db = getDatabase();
+    const rows = await db.select({
+      versionId: demoVersions.id,
+      projectId: demoVersions.projectId,
+      createdAt: demoVersions.createdAt,
+      assetMeta: demoAssets.metadata,
+      projectTitle: projects.title,
+    })
+      .from(demoVersions)
+      .innerJoin(projects, eq(projects.id, demoVersions.projectId))
+      .leftJoin(demoAssets, eq(demoAssets.versionId, demoVersions.id))
+      .where(and(eq(projects.ownerId, owner.id), eq(demoVersions.isMain, true)))
+      .orderBy(desc(demoVersions.createdAt))
+      .limit(safeLimit);
+    return rows.map((r) => ({
+      versionId: r.versionId,
+      projectId: r.projectId,
+      title: String((r.assetMeta?.title as string | undefined) ?? r.projectTitle ?? "未命名"),
+      projectName: r.projectTitle,
+      updatedAt: r.createdAt.toISOString(),
+    }));
   }
 
   async getCurrentAudio(owner: AuthUser, projectId: string) {    const versions = await this.listVersions(owner, projectId);
